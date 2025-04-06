@@ -23,17 +23,21 @@ function M.setup_search_handler(buf)
 		buffer = buf,
 		group = augroup,
 		callback = function()
-			local searchLine = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]
-			local search_text = searchLine:match("Search:%s*(.*)")
+			local search_line = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]
+			local search_text = search_line:match("Search:%s*(.*)")
 
 			display.filter_and_display_prs(search_text)
 
 			vim.api.nvim_buf_clear_namespace(buf, ns_id, 0, -1)
 
-			local prListFirstLine = vim.api.nvim_buf_get_lines(buf, 2, -1, false)[1]
-			local startPos, endPos = M.find_username(prListFirstLine)
-			if startPos and endPos then
-				vim.api.nvim_buf_add_highlight(buf, ns_id, "Special", 2, startPos, endPos)
+			local line_count = vim.api.nvim_buf_line_count(buf)
+
+			for i = 2, line_count - 1 do
+				local pr_first_line_count = vim.api.nvim_buf_get_lines(buf, i, i + 1, false)[1]
+				local start_pos, end_pos = M.find_username(pr_first_line_count)
+				if start_pos and end_pos then
+					vim.api.nvim_buf_add_highlight(buf, ns_id, "CursorLine", i, start_pos - 1, end_pos)
+				end
 			end
 		end,
 	})
