@@ -1,5 +1,9 @@
 local M = {}
 
+local search = require("pr-notifier.search")
+local display = require("pr-notifier.display")
+local curl = require("plenary.curl")
+
 M.config = {
 	owner = nil,
 	repo = nil,
@@ -11,8 +15,6 @@ M.config = {
 		border = "rounded",
 	},
 }
-
-local curl = require("plenary.curl")
 
 function M.setup(opts)
 	opts = opts or {}
@@ -85,6 +87,13 @@ function M.open_float_window()
 	}
 
 	local win = vim.api.nvim_open_win(buf, true, win_opts)
+
+	search.setup_search_field(buf)
+
+	vim.api.nvim_buf_set_lines(buf, 2, -1, false, { "Loading Prs..." })
+
+	search.setup_search_handler(buf)
+	search.activate_search_field(win)
 end
 
 --- @param owner string
@@ -100,8 +109,7 @@ function M.get_prs_for_repo(owner, repo)
 			if response.status == 200 then
 				local success, data = pcall(vim.json.decode, response.body)
 				if success then
-					print(data)
-					M.display_prs(data)
+					display.display_prs(data)
 				else
 					print("Failed to decode JSON response")
 				end
@@ -110,23 +118,6 @@ function M.get_prs_for_repo(owner, repo)
 			end
 		end,
 	})
-end
-
-function M.display_prs(prs)
-	vim.schedule(function()
-		local buff = vim.api.nvim_get_current_buf()
-		local lines = {}
-		table.insert(lines, "Pull Requests:")
-		table.insert(lines, "-------------")
-
-		for _, pr in ipairs(prs) do
-			local draft_status = pr.draft and "[DRAFT] " or ""
-			local line = string.format("%d | %s%s (%s)", pr.number, draft_status, pr.title, pr.user.login)
-			table.insert(lines, line)
-		end
-
-		vim.api.nvim_buf_set_lines(buff, 0, -1, false, lines)
-	end)
 end
 
 function M.open_pr_browser()
