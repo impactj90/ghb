@@ -3,6 +3,7 @@ local M = {}
 local search = require("pr-notifier.search")
 local display = require("pr-notifier.display")
 local curl = require("plenary.curl")
+local tmux_helper = require("pr-notifier.tmux-helper")
 
 M.config = {
 	owner = nil,
@@ -31,6 +32,15 @@ function M.setup(opts)
 
 	vim.api.nvim_create_user_command("Ghb", function()
 		M.open_pr_browser()
+	end, {})
+
+	vim.api.nvim_create_user_command("GhbTestWindow", function()
+		if tmux_helper.is_in_tmux() then
+			local window = tmux_helper.tmux_new_window("ghb-test")
+			print(window)
+		else
+			vim.notify("Not in tmux", vim.log.levels.ERROR)
+		end
 	end, {})
 end
 
