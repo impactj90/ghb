@@ -36,8 +36,11 @@ function M.setup(opts)
 
 	vim.api.nvim_create_user_command("GhbTestWindow", function()
 		if tmux_helper.is_in_tmux() then
-			local window = tmux_helper.tmux_new_window("ghb-test")
-			print(window)
+			M.orignal_window = vim.api.nvim_get_current_win()
+			print(M.orignal_window)
+
+			local window = tmux_helper.tmux_new_window("ghb-test-window")
+			tmux_helper.tmux_send_to_window(window, "echo 'hello from tmux window'")
 		else
 			vim.notify("Not in tmux", vim.log.levels.ERROR)
 		end
@@ -98,7 +101,7 @@ function M.open_float_window()
 
 	local win = vim.api.nvim_open_win(buf, true, win_opts)
 
-	search.setup_search_field(buf)
+	search.setup_search_field(buf, M.config.owner, M.config.repo)
 
 	vim.api.nvim_buf_set_lines(buf, 2, -1, false, { "Loading Prs..." })
 

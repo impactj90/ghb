@@ -3,6 +3,7 @@ local M = {}
 local display = require("pr-notifier.display")
 local ns_id = vim.api.nvim_create_namespace("pr_notifier_highlights")
 local current_selection = 2 -- 1 is the "Search: " text, 2 is the first PR
+local pr_selection_handler = require("pr-notifier.pr-selector-handler")
 
 function M.move_cursor_down(buf)
 	local line_count = vim.api.nvim_buf_line_count(buf)
@@ -35,7 +36,7 @@ function M.update_highlights(buf)
 end
 
 --- @param buf any
-function M.setup_search_field(buf)
+function M.setup_search_field(buf, owner, repo)
 	vim.api.nvim_buf_set_lines(buf, 0, 1, false, { "Search: " })
 
 	vim.api.nvim_buf_add_highlight(buf, ns_id, "Title", 0, 0, 7)
@@ -53,6 +54,14 @@ function M.setup_search_field(buf)
 	vim.api.nvim_buf_set_keymap(buf, "n", "<C-k>", "", {
 		callback = function()
 			M.move_cursor_up(buf)
+		end,
+		noremap = true,
+		silent = true,
+	})
+
+	vim.api.nvim_buf_set_keymap(buf, "n", "<CR>", "", {
+		callback = function()
+			pr_selection_handler.handle_pr_selection(current_selection, owner, repo)
 		end,
 		noremap = true,
 		silent = true,
