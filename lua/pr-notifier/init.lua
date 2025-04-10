@@ -1,9 +1,7 @@
 local M = {}
 
 local search = require("pr-notifier.search")
-local display = require("pr-notifier.display")
-local curl = require("plenary.curl")
-local tmux_helper = require("pr-notifier.tmux-helper")
+local github_handler = require("pr-notifier.github-handler")
 
 M.config = {
 	owner = nil,
@@ -30,20 +28,14 @@ function M.setup(opts)
 		end
 	end
 
+	if not M.validate_config() then
+		return
+	end
+
+	github_handler.setup(M.config)
+
 	vim.api.nvim_create_user_command("Ghb", function()
 		M.open_pr_browser()
-	end, {})
-
-	vim.api.nvim_create_user_command("GhbTestWindow", function()
-		if tmux_helper.is_in_tmux() then
-			M.orignal_window = vim.api.nvim_get_current_win()
-			print(M.orignal_window)
-
-			local window = tmux_helper.tmux_new_window("ghb-test-window")
-			tmux_helper.tmux_send_to_window(window, "echo 'hello from tmux window'")
-		else
-			vim.notify("Not in tmux", vim.log.levels.ERROR)
-		end
 	end, {})
 end
 
@@ -109,38 +101,10 @@ function M.open_float_window()
 	search.activate_search_field(win)
 end
 
---- @param owner string
---- @param repo string
-function M.get_prs_for_repo(owner, repo)
-	curl.get({
-		url = "https://api.github.com/repos/" .. owner .. "/" .. repo .. "/pulls",
-		headers = {
-			["User-Agent"] = "github-pr-browser-nvim",
-			["Authorization"] = "token " .. M.config.token,
-		},
-		callback = function(response)
-			if response.status == 200 then
-				local success, data = pcall(vim.json.decode, response.body)
-				if success then
-					display.display_prs(data)
-				else
-					print("Failed to decode JSON response")
-				end
-			else
-				print("error fetching prs " .. response.status)
-			end
-		end,
-	})
-end
-
 function M.open_pr_browser()
-	if not M.validate_config() then
-		return
-	end
 
 	M.open_float_window()
-
-	M.get_prs_for_repo(M.config.owner, M.config.repo)
+	github_handler.get_prs_for_repo()
 end
 
 return M
