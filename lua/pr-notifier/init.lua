@@ -9,8 +9,8 @@ M.config = {
 	token = nil,
 	show_drafts = true,
 	window = {
-		width = 100,
-		height = 50,
+		width_pct = 0.6,
+		height_pct = 0.7,
 		border = "rounded",
 	},
 }
@@ -79,14 +79,19 @@ function M.load_token()
 end
 
 function M.open_float_window()
+	local width_pct = M.config.window.width_pct or 0.6
+	local height_pct = M.config.window.height_pct or 0.7
+	local width = math.floor(vim.o.columns * width_pct)
+	local height = math.floor(vim.o.lines * height_pct)
+
 	local buf = vim.api.nvim_create_buf(false, true)
 
 	local win_opts = {
 		relative = "editor",
-		width = M.config.window.width,
-		height = M.config.window.height,
-		col = (vim.o.columns - M.config.window.width) / 2,
-		row = (vim.o.lines - M.config.window.height) / 2,
+		width = width,
+		height = height,
+		col = math.floor(((vim.o.columns - width) / 2) - 1),
+		row = math.floor((vim.o.lines - height) / 2),
 		style = "minimal",
 		border = M.config.window.border,
 	}
