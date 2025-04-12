@@ -10,7 +10,7 @@ end
 
 function M.get_prs_for_repo(callback)
 	curl.get({
-		url = "https://api.github.com/repos/" .. M.config.owner .. "/" .. M.config.repo .. "/pulls",
+		url = "https://api.github.com/repos/" .. M.config.owner .. "/" .. M.config.repo .. "/pulls?per_page=100",
 		headers = {
 			["User-Agent"] = "github-pr-browser-nvim",
 			["Authorization"] = "token " .. M.config.token,

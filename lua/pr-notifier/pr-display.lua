@@ -20,7 +20,7 @@ function M.show_pr_details(pr_number, owner, repo)
 			local lines = {}
 			table.insert(lines, "PR #" .. pr_data.number .. ": " .. pr_data.title)
 			table.insert(lines, "commit: " .. pr_data.head.sha)
-			table.insert(lines, string.rep("-", vim.api.nvim_win_get_width(0) - 1)) -- Separator line
+			table.insert(lines, "")
 			table.insert(lines, "Author: " .. pr_data.user.login)
 			table.insert(lines, "Status: " .. (pr_data.draft and "DRAFT" or pr_data.state))
 			table.insert(lines, "Created: " .. pr_data.created_at:sub(1, 10))
@@ -40,9 +40,7 @@ function M.show_pr_details(pr_number, owner, repo)
 					end
 
 					table.insert(new_lines, "Files Changed (" .. #files_data .. "):")
-					table.insert(new_lines, string.rep("-", vim.api.nvim_win_get_width(0) - 1)) -- Separator line
-
-					-- Sort files by path
+					table.insert(lines, "")
 					table.sort(files_data, function(a, b) return a.filename < b.filename end)
 
 					-- Add file entries
