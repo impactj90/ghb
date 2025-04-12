@@ -19,6 +19,7 @@ function M.show_pr_details(pr_number, owner, repo)
 		vim.schedule(function()
 			local lines = {}
 			table.insert(lines, "PR #" .. pr_data.number .. ": " .. pr_data.title)
+			table.insert(lines, "commit: " .. pr_data.head.sha)
 			table.insert(lines, string.rep("-", vim.api.nvim_win_get_width(0) - 1)) -- Separator line
 			table.insert(lines, "Author: " .. pr_data.user.login)
 			table.insert(lines, "Status: " .. (pr_data.draft and "DRAFT" or pr_data.state))
@@ -147,6 +148,11 @@ function M.view_file_diff(file)
 
 	M.file_buf = vim.api.nvim_create_buf(false, true)
 
+	vim.api.nvim_buf_set_option(M.file_buf, "buftype", "nofile")
+	vim.api.nvim_buf_set_option(M.file_buf, "swapfile", false)
+	vim.api.nvim_buf_set_option(M.file_buf, "modifiable", true)
+	vim.api.nvim_buf_set_option(M.file_buf, "filetype", "diff")
+
 	vim.api.nvim_buf_set_lines(M.file_buf, 0, 1, false, {
 		"Loading file diff for " .. file.filename .. "...",
 		"",
@@ -162,11 +168,7 @@ function M.view_file_diff(file)
 		-- The current window is now the newly created split window
 		local file_win = vim.api.nvim_get_current_win()
 		vim.api.nvim_win_set_height(file_win, 40)
-
 		vim.api.nvim_win_set_buf(file_win, M.file_buf)
-
-		vim.cmd(":Gvdiffsplit!" .. file.filename)
-
 
 		vim.api.nvim_buf_set_keymap(M.file_buf, 'n', 'q',
 			':lua require("pr-notifier.pr-display").clear_buffers(' ..
