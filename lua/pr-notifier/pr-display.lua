@@ -211,6 +211,7 @@ function M.view_file_diff(file)
 			"Press <Backspace> to return to PR details | q to exit to code"
 		})
 	end
+
 	-- Set up keymaps
 	vim.api.nvim_buf_set_keymap(M.file_buf, 'n', '<BS>',
 		':q<CR>',

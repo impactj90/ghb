@@ -1,7 +1,6 @@
-local M = {}
-
 local curl = require("plenary.curl")
-local display = require("pr-notifier.display")
+
+local M = {}
 
 M.config = nil
 
@@ -9,7 +8,7 @@ function M.setup(opts)
 	M.config = opts
 end
 
-function M.get_prs_for_repo()
+function M.get_prs_for_repo(callback)
 	curl.get({
 		url = "https://api.github.com/repos/" .. M.config.owner .. "/" .. M.config.repo .. "/pulls",
 		headers = {
@@ -20,7 +19,7 @@ function M.get_prs_for_repo()
 			if response.status == 200 then
 				local success, data = pcall(vim.json.decode, response.body)
 				if success then
-					display.display_prs(data)
+					callback(data)
 				else
 					print("Failed to decode JSON response")
 				end
@@ -79,7 +78,7 @@ end
 function M.create_comment(pr_number, body, callback)
 	curl.post({
 		url = "https://api.github.com/repos/" ..
-		M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/comments",
+		    M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/comments",
 		headers = {
 			["User-Agent"] = "github-pr-browser-nvim",
 			["Authorization"] = "token " .. M.config.token,

@@ -2,12 +2,7 @@ local M = {}
 
 local tmux_helper = require("pr-notifier.tmux-helper")
 
-function M.handle_pr_selection(current_selection, owner, repo)
-	local line = vim.api.nvim_buf_get_lines(0, current_selection, current_selection + 1, false)[1]
-	print("line: " .. line)
-	local pr_number = tonumber(line:match("^(%d+)%s*|"))
-	print("pr_number: " .. pr_number)
-
+function M.handle_pr_selection(pr_number, owner, repo)
 	if not pr_number then
 		vim.notify("Invalid PR number", vim.log.levels.ERROR)
 		return

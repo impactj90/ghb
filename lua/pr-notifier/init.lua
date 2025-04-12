@@ -1,7 +1,7 @@
 local M = {}
 
-local search = require("pr-notifier.search")
 local github_handler = require("pr-notifier.github-handler")
+local telescope_integration = require("pr-notifier.telescope")
 
 M.config = {
 	owner = nil,
@@ -35,7 +35,13 @@ function M.setup(opts)
 	github_handler.setup(M.config)
 
 	vim.api.nvim_create_user_command("Ghb", function()
-		M.open_pr_browser()
+		local has_telescope, telescope = pcall(require, "telescope")
+		if not has_telescope then
+			vim.notify("Telescope.nvim is required for this command", vim.log.levels.ERROR)
+			return
+		end
+
+		telescope_integration.browse_prs()
 	end, {})
 end
 
@@ -76,40 +82,6 @@ function M.load_token()
 	end
 
 	return false
-end
-
-function M.open_float_window()
-	local width_pct = M.config.window.width_pct or 0.6
-	local height_pct = M.config.window.height_pct or 0.7
-	local width = math.floor(vim.o.columns * width_pct)
-	local height = math.floor(vim.o.lines * height_pct)
-
-	local buf = vim.api.nvim_create_buf(false, true)
-
-	local win_opts = {
-		relative = "editor",
-		width = width,
-		height = height,
-		col = math.floor(((vim.o.columns - width) / 2) - 1),
-		row = math.floor((vim.o.lines - height) / 2),
-		style = "minimal",
-		border = M.config.window.border,
-	}
-
-	local win = vim.api.nvim_open_win(buf, true, win_opts)
-
-	search.setup_search_field(buf, M.config.owner, M.config.repo)
-
-	vim.api.nvim_buf_set_lines(buf, 2, -1, false, { "Loading Prs..." })
-
-	search.setup_search_handler(buf)
-	search.activate_search_field(win)
-end
-
-function M.open_pr_browser()
-
-	M.open_float_window()
-	github_handler.get_prs_for_repo()
 end
 
 return M
