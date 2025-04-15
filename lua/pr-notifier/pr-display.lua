@@ -1,4 +1,6 @@
 local github_handler = require("pr-notifier.github-handler")
+local pr_preview = require("pr-notifier.pr-preview")
+local pr_state = require("pr-notifier.pr-state")
 
 local M = {
 	details_buf = nil,
@@ -69,22 +71,10 @@ function M.show_pr_details(pr_number, owner, repo)
 						':lua require("pr-notifier.pr-display").handle_file_selection()<CR>',
 						{ noremap = true, silent = true })
 
-					-- IMPORTANT: Store data as a global variable first as a fallback
-					-- This ensures the data is available even if the buffer variables don't work
-					_G.PR_REVIEW_DATA = {
-						pr_number = pr_number,
-						owner = owner,
-						repo = repo,
-						files = files_data,
-					}
-
-					-- Now try to store in buffer local variables
-					vim.api.nvim_buf_set_var(M.details_buf, "pr_data", {
-						pr_number = pr_number,
-						owner = owner,
-						repo = repo,
-						files = files_data,
-					})
+					pr_state.set("pr_number", pr_number)
+					pr_state.set("owner", owner)
+					pr_state.set("repo", repo)
+					pr_state.set("files", files_data)
 
 					-- Print confirmation
 					vim.notify("Stored data for " .. #files_data .. " files", vim.log.levels.INFO)
@@ -100,24 +90,7 @@ function M.show_pr_details(pr_number, owner, repo)
 end
 
 function M.handle_file_selection()
-	local bufdata = nil
-	local ok = pcall(function()
-		bufdata = vim.api.nvim_buf_get_var(M.details_buf, "pr_data")
-	end)
-
-	if not ok or not bufdata then
-		vim.notify("Buffer data: " .. vim.inspect(bufdata), vim.log.levels.INFO)
-		bufdata = _G.PR_REVIEW_DATA
-		vim.notify("Using fallback global data", vim.log.levels.INFO)
-	end
-
-	if not bufdata or not bufdata.files or #bufdata.files == 0 then
-		vim.notify("No file data available", vim.log.levels.ERROR)
-		return
-	end
-
 	local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
-
 	local current_line = vim.api.nvim_buf_get_lines(M.details_buf, cursor_line - 1, cursor_line, false)[1]
 
 	if not current_line:match("^%d+%. %[") then
@@ -131,8 +104,15 @@ function M.handle_file_selection()
 		return
 	end
 
-	if file_num > 0 and file_num <= #bufdata.files then
-		local file = bufdata.files[file_num]
+	local files = pr_state.get("files")
+	if not files then
+		vim.notify("No files selected", vim.log.levels.ERROR)
+		return
+	end
+
+	if file_num > 0 and file_num <= #files then
+		local file = files[file_num]
+		pr_state.set("selected_file", file)
 		M.view_file_diff(file)
 	else
 		vim.notify("Invalid file number: " .. file_num, vim.log.levels.ERROR)
@@ -176,6 +156,9 @@ function M.view_file_diff(file)
 
 
 	if file.patch then
+		local line_mapping = {}
+		local buf_lines = 1
+
 		-- Generate diff header
 		local diff_header = {
 			"diff --git a/" .. file.filename .. " b/" .. file.filename,
@@ -183,10 +166,18 @@ function M.view_file_diff(file)
 			"+++ b/" .. file.filename,
 		}
 
-		-- Split patch into lines
 		local diff_lines = {}
 		for line in file.patch:gmatch("[^\r\n]+") do
 			table.insert(diff_lines, line)
+		end
+
+		for _ = 1, #diff_header do
+			buf_lines = buf_lines + 1
+		end
+
+		for i, _ in ipairs(diff_lines) do
+			line_mapping[buf_lines] = i - 1
+			buf_lines = buf_lines + 1
 		end
 
 		-- Combine header and diff
@@ -197,6 +188,10 @@ function M.view_file_diff(file)
 		for _, line in ipairs(diff_lines) do
 			table.insert(lines, line)
 		end
+
+		pr_state.set("filename", file.filename)
+		pr_state.set("commit_id", file.sha)
+		pr_state.set("line_mapping", line_mapping)
 
 		-- Set the lines in the buffer
 		vim.api.nvim_buf_set_lines(M.file_buf, 0, -1, false, lines)
@@ -209,6 +204,10 @@ function M.view_file_diff(file)
 			"Press <Backspace> to return to PR details | q to exit to code"
 		})
 	end
+
+	vim.api.nvim_buf_set_keymap(M.file_buf, 'n', '<Space>co',
+		':lua require("pr-notifier.pr-display").handle_add_comment_keypress()<CR>',
+		{ noremap = true, silent = true })
 
 	-- Set up keymaps
 	vim.api.nvim_buf_set_keymap(M.file_buf, 'n', '<BS>',
@@ -235,6 +234,40 @@ function M.clear_buffers(win, buf)
 	if win and vim.api.nvim_win_is_valid(win) then
 		pcall(vim.api.nvim_win_close, win, true)
 	end
+end
+
+function M.handle_add_comment_keypress()
+	local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+	local line_mapping = pr_state.get("line_mapping")
+
+	if not cursor_line then
+		vim.notify("No cursor line was recorded", vim.log.levels.ERROR)
+		return
+	end
+	local diff_position = line_mapping[cursor_line]
+
+	local filename = pr_state.get("filename")
+	local pr_number = pr_state.get("pr_number")
+
+	vim.ui.input({ prompt = "Add comment: " }, function(input)
+		if input and input ~= "" then
+			pr_preview.add_comment(pr_number, filename, diff_position, input)
+
+			M.refresh_ui_with_comments(pr_number, filename, diff_position, input)
+		end
+	end)
+end
+
+function M.refresh_ui_with_comments(pr_number, file_path, diff_position, input)
+	vim.inspect(pr_number)
+	vim.inspect(file_path)
+	vim.inspect(diff_position)
+	vim.inspect(input)
+	-- M.show_comments()
+end
+
+function M.show_comments(cursor_line)
+	print("Showing comments")
 end
 
 return M
