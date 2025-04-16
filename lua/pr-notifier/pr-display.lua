@@ -1,5 +1,4 @@
 local github_handler = require("pr-notifier.github-handler")
-local pr_preview = require("pr-notifier.pr-preview")
 local pr_state = require("pr-notifier.pr-state")
 
 local M = {
@@ -7,7 +6,31 @@ local M = {
 	file_buf = nil,
 }
 
-function M.setup() end
+function M.setup()
+end
+
+local function setup_comment_keymaps(buf)
+	pcall(vim.api.nvim_buf_del_keymap, buf, 'n', "<CR>")
+
+	vim.keymap.set('n', '<CR>', function()
+		local cursor = vim.api.nvim_win_get_cursor(0)
+		local line = cursor[1] - 1 -- Convert to 0-indexed
+
+		local ns_id = vim.api.nvim_create_namespace("pr_comments")
+		local extmarks = vim.api.nvim_buf_get_extmarks(buf, ns_id, { line, 0 }, { line, -1 }, {})
+		if #extmarks > 0 then
+			vim.notify("comment extmark found", vim.log.levels.INFO)
+			M.show_comment_details()
+		else
+			vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), 'n', false)
+		end
+	end, {
+		buffer = buf,
+		noremap = true,
+		silent = true,
+		desc = "Show PR comment details"
+	})
+end
 
 function M.show_pr_details(pr_number, owner, repo)
 	M.details_buf = vim.api.nvim_create_buf(false, true)
@@ -16,6 +39,8 @@ function M.show_pr_details(pr_number, owner, repo)
 	vim.api.nvim_buf_set_option(M.details_buf, "buftype", "nofile")
 	vim.api.nvim_buf_set_option(M.details_buf, "swapfile", false)
 	vim.api.nvim_buf_set_option(M.details_buf, "modifiable", true)
+
+	pr_state.set("buffers.details", M.details_buf)
 
 	github_handler.get_prs_details(pr_number, function(pr_data)
 		vim.schedule(function()
@@ -60,31 +85,26 @@ function M.show_pr_details(pr_number, owner, repo)
 						table.insert(new_lines, line)
 					end
 
-					-- Add blank line and help text
-					table.insert(new_lines, "")
-
 					-- Update buffer
 					vim.api.nvim_buf_set_lines(M.details_buf, 0, -1, false, new_lines)
-
-					-- Set up file selection keymap
-					vim.api.nvim_buf_set_keymap(M.details_buf, 'n', '<CR>',
-						':lua require("pr-notifier.pr-display").handle_file_selection()<CR>',
-						{ noremap = true, silent = true })
 
 					pr_state.set("pr_number", pr_number)
 					pr_state.set("owner", owner)
 					pr_state.set("repo", repo)
 					pr_state.set("files", files_data)
 
+					-- Set up file selection keymap
+					vim.api.nvim_buf_set_keymap(M.details_buf, 'n', '<CR>',
+						':lua require("pr-notifier.pr-display").handle_file_selection()<CR>',
+						{ noremap = true, silent = true })
+
 					-- Print confirmation
-					vim.notify("Stored data for " .. #files_data .. " files", vim.log.levels.INFO)
 					table.insert(new_lines,
 						"Press <Enter> on a file to view diff | q to close and return")
 				end)
 			end)
 		end)
 	end)
-
 
 	vim.api.nvim_buf_set_keymap(M.details_buf, "n", "q", ":q<CR>", { noremap = true, silent = true })
 end
@@ -106,7 +126,7 @@ function M.handle_file_selection()
 
 	local files = pr_state.get("files")
 	if not files then
-		vim.notify("No files selected", vim.log.levels.ERROR)
+		vim.notify("No files selected" .. vim.inspect(pr_state.get("files")), vim.log.levels.ERROR)
 		return
 	end
 
@@ -130,6 +150,8 @@ function M.view_file_diff(file)
 	vim.api.nvim_buf_set_option(M.file_buf, "swapfile", false)
 	vim.api.nvim_buf_set_option(M.file_buf, "modifiable", true)
 	vim.api.nvim_buf_set_option(M.file_buf, "filetype", "diff")
+
+	pr_state.set("buffers.file", M.file_buf)
 
 	vim.api.nvim_buf_set_lines(M.file_buf, 0, 1, false, {
 		"Loading file diff for " .. file.filename .. "...",
@@ -205,8 +227,20 @@ function M.view_file_diff(file)
 		})
 	end
 
+	local pr_number = pr_state.get("pr_number")
+	github_handler.get_pr_comments(pr_number, function(comments)
+		vim.schedule(function()
+			local comments_handler = require("pr-notifier.comments-handler")
+			local organized_comments = comments_handler.organize_comments_by_file(comments)
+
+			pr_state.set("organized_comments", organized_comments)
+
+			M.display_comments_for_file(file.filename)
+		end)
+	end)
+
 	vim.api.nvim_buf_set_keymap(M.file_buf, 'n', '<Space>co',
-		':lua require("pr-notifier.pr-display").handle_add_comment_keypress()<CR>',
+		':lua require("pr-notifier.pr-display").add_comment_at_current_line()<CR>',
 		{ noremap = true, silent = true })
 
 	-- Set up keymaps
@@ -236,38 +270,242 @@ function M.clear_buffers(win, buf)
 	end
 end
 
-function M.handle_add_comment_keypress()
-	local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
-	local line_mapping = pr_state.get("line_mapping")
+function M.add_comment_at_current_line()
+	local pr_data = pr_state.get("buffers.details")
 
-	if not cursor_line then
-		vim.notify("No cursor line was recorded", vim.log.levels.ERROR)
+	-- Get current line number
+	local cursor = vim.api.nvim_win_get_cursor(0)
+	local line_num = cursor[1]
+
+	-- Open a small floating window for comment input
+	local comment_buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_lines(comment_buf, 0, -1, false,
+		{ "", "Type your comment here (Press <CR> to submit, <Esc> to cancel)" })
+
+	local win_width = 70
+	local win_height = 10
+
+	local win = vim.api.nvim_open_win(comment_buf, true, {
+		relative = "cursor",
+		width = win_width,
+		height = win_height,
+		row = 1,
+		col = 0,
+		style = "minimal",
+		border = "rounded"
+	})
+
+	-- Set insert mode and mappings
+	vim.cmd("startinsert!")
+
+	vim.api.nvim_buf_set_keymap(comment_buf, "i", "<CR>", "", {
+		callback = function()
+			local comment_text = vim.api.nvim_buf_get_lines(comment_buf, 0, -1, false)
+			comment_text = table.concat(comment_text, "\n")
+
+			-- Close the comment window
+			vim.api.nvim_win_close(win, true)
+
+			-- Submit the comment via API
+			github_handler.submit_comment(pr_data.pr_number, file.filename, line_num, comment_text)
+		end,
+		noremap = true
+	})
+
+	vim.api.nvim_buf_set_keymap(comment_buf, "i", "<Esc>", "", {
+		callback = function()
+			vim.api.nvim_win_close(win, true)
+		end,
+		noremap = true
+	})
+end
+
+function M.display_comments_for_file(filename)
+	local buf = pr_state.get("buffers.file")
+
+	if not buf or not vim.api.nvim_buf_is_valid(buf) then
+		vim.notify("file_buf is not valid.", vim.log.levels.ERROR)
 		return
 	end
-	local diff_position = line_mapping[cursor_line]
 
-	local filename = pr_state.get("filename")
-	local pr_number = pr_state.get("pr_number")
+	local organized_comments = pr_state.get("organized_comments")
+	local file_comments = organized_comments[filename]
+	if not file_comments then
+		vim.notify("no commens were found", vim.log.levels.INFO)
+		return
+	end
+	local ns_id = vim.api.nvim_create_namespace("pr_comments")
 
-	vim.ui.input({ prompt = "Add comment: " }, function(input)
-		if input and input ~= "" then
-			pr_preview.add_comment(pr_number, filename, diff_position, input)
+	-- Clear existing comments
+	vim.api.nvim_buf_clear_namespace(buf, ns_id, 0, -1)
 
-			M.refresh_ui_with_comments(pr_number, filename, diff_position, input)
+	-- For each line with comments
+	for line_num, comments in pairs(file_comments) do
+		-- Find the actual line number in our buffer (might be different because of diff view)
+		local buffer_line = M.find_matching_line_in_buffer(buf, line_num, filename)
+
+		if buffer_line and buffer_line > 0 then
+			-- For each comment on this line
+			for i, comment in ipairs(comments) do
+				vim.api.nvim_buf_set_extmark(buf, ns_id, buffer_line, 0, {
+					virt_text = { { " 💬 " .. comment.body } },
+					virt_text_pos = "eol",
+					priority = 100,
+					id = comment.id or i,
+				})
+
+				if not pr_state.get("comment_data") then
+					pr_state.set("comment_data", {})
+				end
+
+				local comment_data = pr_state.get("comment_data")
+
+				comment_data[comment.id or i] = {
+					user = comment.user,
+					body = comment.body,
+					line = buffer_line,
+					created_at = comment.created_at,
+				}
+
+				pr_state.set("comment_data", comment_data)
+			end
+		end
+	end
+	setup_comment_keymaps(buf)
+end
+
+function M.show_comment_details()
+	local buf = pr_state.get("buffers.file")
+	local ns_id = vim.api.nvim_create_namespace("pr_comments")
+
+	-- Get the current line
+	local cursor = vim.api.nvim_win_get_cursor(0)
+	local line = cursor[1] - 1 -- Convert to 0-indexed
+
+	-- Check if there's a comment extmark on this line
+	local extmarks = vim.api.nvim_buf_get_extmarks(buf, ns_id, { line, 0 }, { line, -1 }, {})
+
+	if #extmarks > 0 then
+		-- Get the first extmark's ID (which we set to the comment ID)
+		local extmark = extmarks[1]
+		local comment_id = extmark[4] -- sign_id should be in this position
+
+		-- Get the comment data
+		local comment_data = pr_state.get("comment_data")
+		if comment_data and comment_data[comment_id] then
+			local comment = comment_data[comment_id]
+
+			-- Create a floating window with the comment details
+			local comment_buf = vim.api.nvim_create_buf(false, true)
+
+			-- Format the comment nicely
+			local comment_lines = {
+				"Comment by " .. comment.user,
+				string.rep("-", 30),
+				"", -- Empty line before comment text
+			}
+
+			-- Split comment body into lines and add them
+			for part in comment.body:gmatch("[^\r\n]+") do
+				table.insert(comment_lines, part)
+			end
+
+			-- Add timestamp at the bottom
+			table.insert(comment_lines, "")
+			table.insert(comment_lines, string.rep("-", 30))
+
+			-- Format the date nicely if available
+			if comment.created_at then
+				local date_str = comment.created_at:match("^(%d%d%d%d%-%d%d%-%d%d)")
+				table.insert(comment_lines, "Posted on: " .. (date_str or comment.created_at))
+			end
+
+			-- Add a line about how to close the window
+			table.insert(comment_lines, "")
+			table.insert(comment_lines, "Press 'q' to close this window")
+
+			vim.api.nvim_buf_set_lines(comment_buf, 0, -1, false, comment_lines)
+
+			-- Calculate a good size for the floating window
+			local max_width = 0
+			for _, line in ipairs(comment_lines) do
+				max_width = math.max(max_width, #line)
+			end
+
+			local win_width = math.min(max_width + 4, 80) -- Cap at 80 chars wide
+			local win_height = math.min(#comment_lines, 20) -- Cap at 20 lines tall
+
+			-- Open the floating window near the comment
+			local win = vim.api.nvim_open_win(comment_buf, true, {
+				relative = "win",
+				row = line,              -- Position at the commented line
+				col = vim.api.nvim_win_get_width(0) - win_width - 5, -- Position from the right side
+				width = win_width,
+				height = win_height,
+				style = "minimal",
+				border = "rounded"
+			})
+
+			-- Make the buffer read-only
+			vim.api.nvim_buf_set_option(comment_buf, "modifiable", false)
+
+			-- Add a mapping to close the window with 'q'
+			vim.api.nvim_buf_set_keymap(comment_buf, 'n', 'q',
+				':lua vim.api.nvim_win_close(' .. win .. ', true)<CR>',
+				{ noremap = true, silent = true })
+		end
+	end
+end
+
+-- @return line number in buffer or nil if not found
+function M.find_matching_line_in_buffer(buf, target_line, filename)
+	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+
+	-- For diff format, find lines that look like @@ -X,Y +A,B @@
+	-- which indicate line numbers
+	local current_line_offset = 0
+	local in_target_file = false
+
+	for i, line in ipairs(lines) do
+		-- Check if we're in the right file section (for multi-file diffs)
+		if line:match("^%+%+%+ b/" .. filename:gsub("%-", "%%-")) then
+			in_target_file = true
+		elseif line:match("^%+%+%+ b/") then
+			in_target_file = false
+		end
+
+		if in_target_file then
+			-- Look for hunk headers
+			local hunk_match = line:match("^@@ %-(%d+),(%d+) %+(%d+),(%d+) @@")
+			if hunk_match then
+				local _, _, new_start, _ = line:match("^@@ %-(%d+),(%d+) %+(%d+),(%d+) @@")
+				current_line_offset = tonumber(new_start) - i - 1
+			end
+
+			-- If this is our target line
+			if current_line_offset + i == target_line then
+				return i - 1 -- -1 because Neovim is 0-indexed
+			end
+		end
+	end
+
+	return target_line - 1
+end
+
+function M.submit_comment(pr_number, filename, line_num, body)
+	-- This will use the GitHub API to submit a comment
+	-- You'll need to implement this in your github-handler.lua
+	github_handler.create_pr_comment(pr_number, filename, line_num, body, function(success)
+		if success then
+			vim.notify("Comment added successfully", vim.log.levels.INFO)
+			-- Refresh comments
+			github_handler.get_pr_comments(pr_number, function(comments)
+				vim.notify("submitted" .. comments, vim.log.levels.INFO)
+			end)
+		else
+			vim.notify("Failed to add comment", vim.log.levels.ERROR)
 		end
 	end)
-end
-
-function M.refresh_ui_with_comments(pr_number, file_path, diff_position, input)
-	vim.inspect(pr_number)
-	vim.inspect(file_path)
-	vim.inspect(diff_position)
-	vim.inspect(input)
-	-- M.show_comments()
-end
-
-function M.show_comments(cursor_line)
-	print("Showing comments")
 end
 
 return M

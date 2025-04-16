@@ -23,7 +23,6 @@ function M.add_comment(pr_number, file_path, line, body)
 		body = body,
 	})
 
-	-- return the index of the newly added commment
 	return #M.pending_comments
 end
 
