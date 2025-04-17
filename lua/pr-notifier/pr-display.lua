@@ -10,9 +10,10 @@ function M.setup()
 end
 
 local function setup_comment_keymaps(buf)
-	pcall(vim.api.nvim_buf_del_keymap, buf, 'n', "<CR>")
+	vim.notify("setup_comment_keymaps for buffer: " .. buf, vim.log.levels.INFO)
+	pcall(vim.api.nvim_buf_del_keymap, buf, 'n', "<leader>cr")
 
-	vim.keymap.set('n', '<CR>', function()
+	vim.keymap.set('n', '<leader>cr', function()
 		local cursor = vim.api.nvim_win_get_cursor(0)
 		local line = cursor[1] - 1 -- Convert to 0-indexed
 
@@ -20,8 +21,10 @@ local function setup_comment_keymaps(buf)
 		local extmarks = vim.api.nvim_buf_get_extmarks(buf, ns_id, { line, 0 }, { line, -1 }, {})
 		if #extmarks > 0 then
 			vim.notify("comment extmark found", vim.log.levels.INFO)
+			--TODO:  investigate why this is not working
 			M.show_comment_details()
 		else
+			vim.notify("no comment extmark found", vim.log.levels.INFO)
 			vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), 'n', false)
 		end
 	end, {
@@ -239,12 +242,19 @@ function M.view_file_diff(file)
 		end)
 	end)
 
-	vim.api.nvim_buf_set_keymap(M.file_buf, 'n', '<Space>co',
+	local file_buf = pr_state.get("buffers.file")
+	if not file_buf and not vim.api.nvim_buf_is_valid(file_buf) then
+		vim.notify("file_buf is not valid.", vim.log.levels.ERROR)
+		return
+	end
+
+
+	vim.api.nvim_buf_set_keymap(file_buf, 'n', '<leader>co',
 		':lua require("pr-notifier.pr-display").add_comment_at_current_line()<CR>',
 		{ noremap = true, silent = true })
 
 	-- Set up keymaps
-	vim.api.nvim_buf_set_keymap(M.file_buf, 'n', '<BS>',
+	vim.api.nvim_buf_set_keymap(file_buf, 'n', '<BS>',
 		':q<CR>',
 		{ noremap = true, silent = true })
 end
@@ -351,7 +361,6 @@ function M.display_comments_for_file(filename)
 					virt_text = { { " 💬 " .. comment.body } },
 					virt_text_pos = "eol",
 					priority = 100,
-					id = comment.id or i,
 				})
 
 				if not pr_state.get("comment_data") then
@@ -388,10 +397,11 @@ function M.show_comment_details()
 	if #extmarks > 0 then
 		-- Get the first extmark's ID (which we set to the comment ID)
 		local extmark = extmarks[1]
-		local comment_id = extmark[4] -- sign_id should be in this position
+		local comment_id = extmark[1] -- sign_id should be in this position
 
 		-- Get the comment data
 		local comment_data = pr_state.get("comment_data")
+		vim.print(vim.inspect(comment_data))
 		if comment_data and comment_data[comment_id] then
 			local comment = comment_data[comment_id]
 
@@ -460,36 +470,25 @@ end
 -- @return line number in buffer or nil if not found
 function M.find_matching_line_in_buffer(buf, target_line, filename)
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-
-	-- For diff format, find lines that look like @@ -X,Y +A,B @@
-	-- which indicate line numbers
-	local current_line_offset = 0
-	local in_target_file = false
+	local new_line_num = nil
 
 	for i, line in ipairs(lines) do
-		-- Check if we're in the right file section (for multi-file diffs)
-		if line:match("^%+%+%+ b/" .. filename:gsub("%-", "%%-")) then
-			in_target_file = true
-		elseif line:match("^%+%+%+ b/") then
-			in_target_file = false
-		end
+		local hunk_match = line:match("^@@ %-(%d+),?(%d*) %+(%d+),?(%d*) @@")
 
-		if in_target_file then
-			-- Look for hunk headers
-			local hunk_match = line:match("^@@ %-(%d+),(%d+) %+(%d+),(%d+) @@")
-			if hunk_match then
-				local _, _, new_start, _ = line:match("^@@ %-(%d+),(%d+) %+(%d+),(%d+) @@")
-				current_line_offset = tonumber(new_start) - i - 1
-			end
-
-			-- If this is our target line
-			if current_line_offset + i == target_line then
-				return i - 1 -- -1 because Neovim is 0-indexed
+		if hunk_match then
+			local _, _, new_start, _ = line:match("^@@ %-(%d+),?(%d*) %+(%d+),?(%d*) @@")
+			new_line_num = tonumber(new_start)
+		else
+			if new_line_num and line:sub(1, 1) ~= "-" then
+				if new_line_num == target_line then
+					return i - 1 -- -1 because Neovim is 0-indexed
+				end
+				new_line_num = new_line_num + 1
 			end
 		end
 	end
 
-	return target_line - 1
+	return nil
 end
 
 function M.submit_comment(pr_number, filename, line_num, body)
