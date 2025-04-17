@@ -196,6 +196,19 @@ function M.view_file_diff(selected_file, file_contents)
 
 	vim.api.nvim_set_current_win(pr_win)
 
+	vim.api.nvim_buf_set_keymap(pr_buf, 'n', 'q', '', {
+		noremap = true,
+		silent = true,
+		callback = function()
+			if base_win and vim.api.nvim_win_is_valid(base_win) then
+				vim.api.nvim_win_close(base_win, true)
+			end
+			if pr_win and vim.api.nvim_win_is_valid(pr_win) then
+				vim.api.nvim_win_close(pr_win, true)
+			end
+		end
+	})
+
 	local pr_number = pr_state.get("pr_number")
 	if pr_number then
 		github_handler.get_pr_comments(pr_number, function(comments)
