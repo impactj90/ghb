@@ -21,7 +21,6 @@ local function setup_comment_keymaps(buf)
 		local extmarks = vim.api.nvim_buf_get_extmarks(buf, ns_id, { line, 0 }, { line, -1 }, {})
 		if #extmarks > 0 then
 			vim.notify("comment extmark found", vim.log.levels.INFO)
-			--TODO:  investigate why this is not working
 			M.show_comment_details()
 		else
 			vim.notify("no comment extmark found", vim.log.levels.INFO)
@@ -38,10 +37,6 @@ end
 function M.show_pr_details(pr_number, owner, repo)
 	M.details_buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_set_current_buf(M.details_buf)
-
-	vim.api.nvim_buf_set_option(M.details_buf, "buftype", "nofile")
-	vim.api.nvim_buf_set_option(M.details_buf, "swapfile", false)
-	vim.api.nvim_buf_set_option(M.details_buf, "modifiable", true)
 
 	pr_state.set("buffers.details", M.details_buf)
 
@@ -95,6 +90,8 @@ function M.show_pr_details(pr_number, owner, repo)
 					pr_state.set("owner", owner)
 					pr_state.set("repo", repo)
 					pr_state.set("files", files_data)
+					pr_state.set("base_branch", pr_data.base.ref)
+					pr_state.set("head_branch", pr_data.head.ref)
 
 					-- Set up file selection keymap
 					vim.api.nvim_buf_set_keymap(M.details_buf, 'n', '<CR>',
@@ -134,127 +131,85 @@ function M.handle_file_selection()
 	end
 
 	if file_num > 0 and file_num <= #files then
-		local file = files[file_num]
-		pr_state.set("selected_file", file)
-		M.view_file_diff(file)
+		local selected_file = files[file_num]
+
+		if pr_state.get("base_branch") and pr_state.get("head_branch") then
+			local baseRef = pr_state.get("base_branch")
+			local headRef = pr_state.get("head_branch")
+
+			local file_contents = {}
+			local completed_requests = 0
+
+			github_handler.get_pr_file_content(selected_file.filename, baseRef,
+				function(file_content)
+					vim.schedule(function()
+						file_contents[1] = vim.fn.system('base64 --decode',
+							file_content.content)
+
+						completed_requests = completed_requests + 1
+						if completed_requests == 2 then
+							M.view_file_diff(selected_file, file_contents)
+						end
+					end)
+				end)
+
+			github_handler.get_pr_file_content(selected_file.filename, headRef,
+				function(file_content)
+					vim.schedule(function()
+						file_contents[2] = vim.fn.system('base64 --decode',
+							file_content.content)
+
+						completed_requests = completed_requests + 1
+						if completed_requests == 2 then
+							M.view_file_diff(selected_file, file_contents)
+						end
+					end)
+				end)
+		end
 	else
 		vim.notify("Invalid file number: " .. file_num, vim.log.levels.ERROR)
 	end
 end
 
-function M.view_file_diff(file)
-	if M.file_buf then
-		M.clear_buffers(vim.api.nvim_get_current_win(), M.file_buf)
-	end
+function M.view_file_diff(selected_file, file_contents)
+	local base_buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_lines(base_buf, 0, -1, false, vim.split(file_contents[1], "\n"))
 
-	M.file_buf = vim.api.nvim_create_buf(false, true)
+	local pr_buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_lines(pr_buf, 0, -1, false, vim.split(file_contents[2], "\n"))
 
-	vim.api.nvim_buf_set_option(M.file_buf, "buftype", "nofile")
-	vim.api.nvim_buf_set_option(M.file_buf, "swapfile", false)
-	vim.api.nvim_buf_set_option(M.file_buf, "modifiable", true)
-	vim.api.nvim_buf_set_option(M.file_buf, "filetype", "diff")
+	vim.cmd("split")
+	vim.cmd("resize 80%")
+	vim.api.nvim_win_set_buf(0, base_buf)
+	vim.cmd("diffthis")
 
-	pr_state.set("buffers.file", M.file_buf)
-
-	vim.api.nvim_buf_set_lines(M.file_buf, 0, 1, false, {
-		"Loading file diff for " .. file.filename .. "...",
-		"",
-		"Press <Backspace> to close and return to original window"
-	})
-
-	if M.file_buf and M.details_buf then
-		local details_win = vim.api.nvim_get_current_win()
-		vim.api.nvim_win_set_buf(details_win, M.details_buf)
-
-		vim.cmd("split")
-
-		-- The current window is now the newly created split window
-		local file_win = vim.api.nvim_get_current_win()
-		vim.api.nvim_win_set_height(file_win, 40)
-		vim.api.nvim_win_set_buf(file_win, M.file_buf)
-
-		vim.api.nvim_buf_set_keymap(M.file_buf, 'n', 'q',
-			':lua require("pr-notifier.pr-display").clear_buffers(' ..
-			M.file_buf .. ', ' .. file_win .. ')<CR>',
-			{ noremap = true, silent = true })
-	end
-
-
-	if file.patch then
-		local line_mapping = {}
-		local buf_lines = 1
-
-		-- Generate diff header
-		local diff_header = {
-			"diff --git a/" .. file.filename .. " b/" .. file.filename,
-			"--- a/" .. file.filename,
-			"+++ b/" .. file.filename,
-		}
-
-		local diff_lines = {}
-		for line in file.patch:gmatch("[^\r\n]+") do
-			table.insert(diff_lines, line)
-		end
-
-		for _ = 1, #diff_header do
-			buf_lines = buf_lines + 1
-		end
-
-		for i, _ in ipairs(diff_lines) do
-			line_mapping[buf_lines] = i - 1
-			buf_lines = buf_lines + 1
-		end
-
-		-- Combine header and diff
-		local lines = {}
-		for _, line in ipairs(diff_header) do
-			table.insert(lines, line)
-		end
-		for _, line in ipairs(diff_lines) do
-			table.insert(lines, line)
-		end
-
-		pr_state.set("filename", file.filename)
-		pr_state.set("commit_id", file.sha)
-		pr_state.set("line_mapping", line_mapping)
-
-		-- Set the lines in the buffer
-		vim.api.nvim_buf_set_lines(M.file_buf, 0, -1, false, lines)
-	else
-		-- If patch is not available (for large diffs), show a message
-		vim.api.nvim_buf_set_lines(M.file_buf, 0, -1, false, {
-			"Patch not available for " .. file.filename,
-			"This usually happens for large files.",
-			"",
-			"Press <Backspace> to return to PR details | q to exit to code"
-		})
-	end
+	vim.cmd("rightbelow vsplit")
+	vim.api.nvim_win_set_buf(0, pr_buf)
+	vim.cmd("diffthis")
 
 	local pr_number = pr_state.get("pr_number")
-	github_handler.get_pr_comments(pr_number, function(comments)
-		vim.schedule(function()
-			local comments_handler = require("pr-notifier.comments-handler")
-			local organized_comments = comments_handler.organize_comments_by_file(comments)
+	if pr_number then
+		github_handler.get_pr_comments(pr_number, function(comments)
+			vim.schedule(function()
+				local comments_handler = require("pr-notifier.comments-handler")
+				local organized_comments = comments_handler.organize_comments_by_file(comments)
 
-			pr_state.set("organized_comments", organized_comments)
+				pr_state.set("organized_comments", organized_comments)
 
-			M.display_comments_for_file(file.filename)
+				M.display_comments_for_file(selected_file.filename)
+			end)
 		end)
-	end)
-
-	local file_buf = pr_state.get("buffers.file")
-	if not file_buf and not vim.api.nvim_buf_is_valid(file_buf) then
-		vim.notify("file_buf is not valid.", vim.log.levels.ERROR)
-		return
+	else
+		vim.notify("No PR number found", vim.log.levels.ERROR)
 	end
 
 
-	vim.api.nvim_buf_set_keymap(file_buf, 'n', '<leader>co',
+	vim.api.nvim_buf_set_keymap(pr_buf, 'n', '<leader>co',
 		':lua require("pr-notifier.pr-display").add_comment_at_current_line()<CR>',
 		{ noremap = true, silent = true })
 
 	-- Set up keymaps
-	vim.api.nvim_buf_set_keymap(file_buf, 'n', '<BS>',
+	vim.api.nvim_buf_set_keymap(pr_buf, 'n', '<BS>',
 		':q<CR>',
 		{ noremap = true, silent = true })
 end
@@ -448,7 +403,7 @@ function M.show_comment_details()
 			-- Open the floating window near the comment
 			local win = vim.api.nvim_open_win(comment_buf, true, {
 				relative = "win",
-				row = line,              -- Position at the commented line
+				row = line,                              -- Position at the commented line
 				col = vim.api.nvim_win_get_width(0) - win_width - 5, -- Position from the right side
 				width = win_width,
 				height = win_height,

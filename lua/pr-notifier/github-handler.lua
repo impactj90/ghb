@@ -197,7 +197,30 @@ end
 function M.get_pr_issue_comments(pr_number, callback)
 	curl.get({
 		url = "https://api.github.com/repos/" ..
-		M.config.owner .. "/" .. M.config.repo .. "/issues/" .. pr_number .. "/comments",
+		    M.config.owner .. "/" .. M.config.repo .. "/issues/" .. pr_number .. "/comments",
+		headers = {
+			["User-Agent"] = "github-pr-browser-nvim",
+			["Authorization"] = "token " .. M.config.token,
+		},
+		callback = function(response)
+			if response.status == 200 then
+				local success, data = pcall(vim.json.decode, response.body)
+				if success then
+					callback(data)
+				else
+					print("Failed to decode JSON response for comments")
+				end
+			else
+				print("Error fetching PR comments: " .. response.status)
+			end
+		end,
+	})
+end
+
+function M.get_pr_file_content(path, ref, callback)
+	curl.get({
+		url = "https://api.github.com/repos/" ..
+		    M.config.owner .. "/" .. M.config.repo .. "/contents/" .. path .. "?ref=" .. ref,
 		headers = {
 			["User-Agent"] = "github-pr-browser-nvim",
 			["Authorization"] = "token " .. M.config.token,

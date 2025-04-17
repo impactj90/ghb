@@ -3,6 +3,8 @@ local M = {
 	repo = nil,
 	files = nil,
 	selected_file = nil,
+	base_branch = nil,
+	head_branch = nil,
 	-- buffers are like containers in html
 	buffers = {
 		details = nil,
