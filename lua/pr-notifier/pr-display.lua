@@ -172,20 +172,29 @@ function M.handle_file_selection()
 end
 
 function M.view_file_diff(selected_file, file_contents)
+	local base_branch = pr_state.get("base_branch")
+	local head_branch = pr_state.get("head_branch")
+
 	local base_buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_name(base_buf, "[BASE: " .. base_branch .. "] " .. selected_file.filename)
 	vim.api.nvim_buf_set_lines(base_buf, 0, -1, false, vim.split(file_contents[1], "\n"))
 
 	local pr_buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_name(pr_buf, "[HEAD: " .. head_branch .. "] " .. selected_file.filename)
 	vim.api.nvim_buf_set_lines(pr_buf, 0, -1, false, vim.split(file_contents[2], "\n"))
 
 	vim.cmd("split")
 	vim.cmd("resize 80%")
+	local base_win = vim.api.nvim_get_current_win()
 	vim.api.nvim_win_set_buf(0, base_buf)
 	vim.cmd("diffthis")
 
 	vim.cmd("rightbelow vsplit")
+	local pr_win = vim.api.nvim_get_current_win()
 	vim.api.nvim_win_set_buf(0, pr_buf)
 	vim.cmd("diffthis")
+
+	vim.api.nvim_set_current_win(pr_win)
 
 	local pr_number = pr_state.get("pr_number")
 	if pr_number then
