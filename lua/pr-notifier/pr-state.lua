@@ -9,6 +9,9 @@ local M = {
 	buffers = {
 		details = nil,
 		file = nil,
+		-- new ones after better knowledge of the nvim api
+		base_buf = nil,
+		pr_buf = nil,
 	},
 	filename = nil,
 	commit_id = nil,

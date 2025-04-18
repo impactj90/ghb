@@ -176,12 +176,14 @@ function M.view_file_diff(selected_file, file_contents)
 	local head_branch = pr_state.get("head_branch")
 
 	local base_buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_name(base_buf, "[BASE: " .. base_branch .. "] " .. selected_file.filename)
+	vim.api.nvim_buf_set_name(base_buf, "[BASE: " .. base_branch .. "] ")
 	vim.api.nvim_buf_set_lines(base_buf, 0, -1, false, vim.split(file_contents[1], "\n"))
+	pr_state.set("buffers.base_buf", base_buf)
 
 	local pr_buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_name(pr_buf, "[HEAD: " .. head_branch .. "] " .. selected_file.filename)
+	vim.api.nvim_buf_set_name(pr_buf, "[HEAD: " .. head_branch .. "] ")
 	vim.api.nvim_buf_set_lines(pr_buf, 0, -1, false, vim.split(file_contents[2], "\n"))
+	pr_state.set("buffers.pr_buf", pr_buf)
 
 	vim.cmd("split")
 	vim.cmd("resize 80%")
@@ -202,9 +204,11 @@ function M.view_file_diff(selected_file, file_contents)
 		callback = function()
 			if base_win and vim.api.nvim_win_is_valid(base_win) then
 				vim.api.nvim_win_close(base_win, true)
+				vim.api.nvim_buf_delete(base_buf, { force = true })
 			end
 			if pr_win and vim.api.nvim_win_is_valid(pr_win) then
 				vim.api.nvim_win_close(pr_win, true)
+				vim.api.nvim_buf_delete(pr_buf, { force = true })
 			end
 		end
 	})
@@ -258,7 +262,7 @@ function M.clear_buffers(win, buf)
 end
 
 function M.add_comment_at_current_line()
-	local pr_data = pr_state.get("buffers.details")
+	local pr_data = pr_state.get("buffers.pr_buf")
 
 	-- Get current line number
 	local cursor = vim.api.nvim_win_get_cursor(0)
@@ -308,10 +312,10 @@ function M.add_comment_at_current_line()
 end
 
 function M.display_comments_for_file(filename)
-	local buf = pr_state.get("buffers.file")
+	local buf = pr_state.get("buffers.pr_buf")
 
 	if not buf or not vim.api.nvim_buf_is_valid(buf) then
-		vim.notify("file_buf is not valid.", vim.log.levels.ERROR)
+		vim.notify("pf_buf is not valid.", vim.log.levels.ERROR)
 		return
 	end
 
@@ -328,33 +332,29 @@ function M.display_comments_for_file(filename)
 
 	-- For each line with comments
 	for line_num, comments in pairs(file_comments) do
-		-- Find the actual line number in our buffer (might be different because of diff view)
-		local buffer_line = M.find_matching_line_in_buffer(buf, line_num, filename)
+		vim.print("line_num: " .. line_num)
+		-- For each comment on this line
+		for i, comment in ipairs(comments) do
+			vim.api.nvim_buf_set_extmark(buf, ns_id, line_num, 0, {
+				virt_text = { { " 💬 " .. comment.body } },
+				virt_text_pos = "eol",
+				priority = 100,
+			})
 
-		if buffer_line and buffer_line > 0 then
-			-- For each comment on this line
-			for i, comment in ipairs(comments) do
-				vim.api.nvim_buf_set_extmark(buf, ns_id, buffer_line, 0, {
-					virt_text = { { " 💬 " .. comment.body } },
-					virt_text_pos = "eol",
-					priority = 100,
-				})
-
-				if not pr_state.get("comment_data") then
-					pr_state.set("comment_data", {})
-				end
-
-				local comment_data = pr_state.get("comment_data")
-
-				comment_data[comment.id or i] = {
-					user = comment.user,
-					body = comment.body,
-					line = buffer_line,
-					created_at = comment.created_at,
-				}
-
-				pr_state.set("comment_data", comment_data)
+			if not pr_state.get("comment_data") then
+				pr_state.set("comment_data", {})
 			end
+
+			local comment_data = pr_state.get("comment_data")
+
+			comment_data[comment.id or i] = {
+				user = comment.user,
+				body = comment.body,
+				line = line_num,
+				created_at = comment.created_at,
+			}
+
+			pr_state.set("comment_data", comment_data)
 		end
 	end
 	setup_comment_keymaps(buf)
@@ -378,7 +378,6 @@ function M.show_comment_details()
 
 		-- Get the comment data
 		local comment_data = pr_state.get("comment_data")
-		vim.print(vim.inspect(comment_data))
 		if comment_data and comment_data[comment_id] then
 			local comment = comment_data[comment_id]
 
@@ -442,30 +441,6 @@ function M.show_comment_details()
 				{ noremap = true, silent = true })
 		end
 	end
-end
-
--- @return line number in buffer or nil if not found
-function M.find_matching_line_in_buffer(buf, target_line, filename)
-	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-	local new_line_num = nil
-
-	for i, line in ipairs(lines) do
-		local hunk_match = line:match("^@@ %-(%d+),?(%d*) %+(%d+),?(%d*) @@")
-
-		if hunk_match then
-			local _, _, new_start, _ = line:match("^@@ %-(%d+),?(%d*) %+(%d+),?(%d*) @@")
-			new_line_num = tonumber(new_start)
-		else
-			if new_line_num and line:sub(1, 1) ~= "-" then
-				if new_line_num == target_line then
-					return i - 1 -- -1 because Neovim is 0-indexed
-				end
-				new_line_num = new_line_num + 1
-			end
-		end
-	end
-
-	return nil
 end
 
 function M.submit_comment(pr_number, filename, line_num, body)
