@@ -3,10 +3,15 @@ local M = {
 	repo = nil,
 	files = nil,
 	selected_file = nil,
+	base_branch = nil,
+	head_branch = nil,
 	-- buffers are like containers in html
 	buffers = {
 		details = nil,
 		file = nil,
+		-- new ones after better knowledge of the nvim api
+		base_buf = nil,
+		pr_buf = nil,
 	},
 	filename = nil,
 	commit_id = nil,
