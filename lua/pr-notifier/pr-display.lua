@@ -9,6 +9,19 @@ local M = {
 function M.setup()
 end
 
+local function wrap_text(text, max_width)
+	local lines = {}
+	for line in text:gmatch("[^\n]+") do
+		while #line > max_width do
+			table.insert(lines, line:sub(1, max_width))
+			line = line:sub(max_width + 1)
+		end
+		table.insert(lines, line)
+	end
+
+	return lines
+end
+
 local function setup_comment_keymaps(buf)
 	vim.notify("setup_comment_keymaps for buffer: " .. buf, vim.log.levels.INFO)
 	pcall(vim.api.nvim_buf_del_keymap, buf, 'n', "<leader>cr")
@@ -191,7 +204,7 @@ function M.view_file_diff(selected_file, file_contents)
 	vim.api.nvim_win_set_buf(0, base_buf)
 	vim.cmd("diffthis")
 
-	vim.cmd("rightbelow vsplit")
+	vim.cmd("rightbelow split")
 	local pr_win = vim.api.nvim_get_current_win()
 	vim.api.nvim_win_set_buf(0, pr_buf)
 	vim.cmd("diffthis")
@@ -333,6 +346,7 @@ function M.display_comments_for_file(filename)
 	-- comment highlight colors
 	vim.api.nvim_set_hl(0, "CommentDivider", { fg = "#aaaaaa", bg = "NONE", italic = true })
 	vim.api.nvim_set_hl(0, "CommentHighlight", { fg = "#dddddd", bg = "#333333", italic = false })
+	local max_width = vim.api.nvim_win_get_width(0) - 10
 
 	-- For each line with comments
 	for line_num, comments in pairs(file_comments) do
@@ -341,7 +355,12 @@ function M.display_comments_for_file(filename)
 
 		table.insert(virt_comment_lines, { { " --- COMMENT THREAD ---", "CommentDivider" } })
 		for i, comment in ipairs(comments) do
-			table.insert(virt_comment_lines, { { " 💬 " .. comment.body, "CommentHighlight" } })
+
+			local wrapped_text = wrap_text(" 💬 " .. comment.body, max_width)
+			for _, wrapped_line in ipairs(wrapped_text) do
+				table.insert(virt_comment_lines, { { wrapped_line, "CommentHighlight" } })
+			end
+
 			local comment_data = pr_state.get("comment_data")
 			if not comment_data then
 				pr_state.set("comment_data", {})
