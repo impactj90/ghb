@@ -330,22 +330,22 @@ function M.display_comments_for_file(filename)
 	-- Clear existing comments
 	vim.api.nvim_buf_clear_namespace(buf, ns_id, 0, -1)
 
+	-- comment highlight colors
+	vim.api.nvim_set_hl(0, "CommentDivider", { fg = "#aaaaaa", bg = "NONE", italic = true })
+	vim.api.nvim_set_hl(0, "CommentHighlight", { fg = "#dddddd", bg = "#333333", italic = false })
+
 	-- For each line with comments
 	for line_num, comments in pairs(file_comments) do
-		vim.print("line_num: " .. line_num)
+		local virt_comment_lines = {}
 		-- For each comment on this line
-		for i, comment in ipairs(comments) do
-			vim.api.nvim_buf_set_extmark(buf, ns_id, line_num, 0, {
-				virt_text = { { " 💬 " .. comment.body } },
-				virt_text_pos = "eol",
-				priority = 100,
-			})
 
-			if not pr_state.get("comment_data") then
+		table.insert(virt_comment_lines, { { " --- COMMENT THREAD ---", "CommentDivider" } })
+		for i, comment in ipairs(comments) do
+			table.insert(virt_comment_lines, { { " 💬 " .. comment.body, "CommentHighlight" } })
+			local comment_data = pr_state.get("comment_data")
+			if not comment_data then
 				pr_state.set("comment_data", {})
 			end
-
-			local comment_data = pr_state.get("comment_data")
 
 			comment_data[comment.id or i] = {
 				user = comment.user,
@@ -356,6 +356,12 @@ function M.display_comments_for_file(filename)
 
 			pr_state.set("comment_data", comment_data)
 		end
+
+		vim.api.nvim_buf_set_extmark(buf, ns_id, line_num, 0, {
+			virt_lines = virt_comment_lines,
+			virt_lines_above = false,
+			priority = 100,
+		})
 	end
 	setup_comment_keymaps(buf)
 end
