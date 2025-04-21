@@ -55,7 +55,7 @@ end
 function M.get_prs_files(pr_number, callback)
 	curl.get({
 		url = "https://api.github.com/repos/" ..
-		    M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/files",
+			M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/files",
 		headers = {
 			["User-Agent"] = "github-pr-browser-nvim",
 			["Authorization"] = "token " .. M.config.token,
@@ -78,7 +78,7 @@ end
 function M.create_comment(pr_number, body, callback)
 	curl.post({
 		url = "https://api.github.com/repos/" ..
-		    M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/comments",
+			M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/comments",
 		headers = {
 			["User-Agent"] = "github-pr-browser-nvim",
 			["Authorization"] = "token " .. M.config.token,
@@ -97,7 +97,7 @@ end
 function M.get_review_comments(pr_number, callback)
 	curl.get({
 		url = "https://api.github.com/repos/" ..
-		    M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/comments",
+			M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/comments",
 		headers = {
 			["User-Agent"] = "github-pr-browser-nvim",
 			["Authorization"] = "token " .. M.config.token,
@@ -125,7 +125,7 @@ function M.create_review_comment(pr_number, commit_id, path, position, body, cal
 
 	curl.post({
 		url = "https://api.github.com/repos/" ..
-		    M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/comments",
+			M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/comments",
 		headers = {
 			["User-Agent"] = "github-pr-browser-nvim",
 			["Authorization"] = "token " .. M.config.token,
@@ -145,16 +145,22 @@ function M.create_review_comment(pr_number, commit_id, path, position, body, cal
 	})
 end
 
+--- Submits a full PR review to GitHub
+-- @param pr_number number: Pull request number
+-- @param event_type string: "APPROVE", "REQUEST_CHANGES", or "COMMENT"
+-- @param body string: General message for the PR
+-- @param comments table|nil: Array of inline comment objects 
+-- which includes path (string), position (number), body(string)
+-- @param callback function: Function to call with the response
 function M.submit_review(pr_number, event_type, body, comments, callback)
 	local request_body = vim.json.encode({
-		event = event_type,
 		body = body,
+		event = event_type,
 		comments = comments or {},
 	})
-	-- review_data should contain event (APPROVE, REQUEST_CHANGES, COMMENT) and body
 	curl.post({
 		url = "https://api.github.com/repos/" ..
-		    M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/reviews",
+			M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/reviews",
 		headers = {
 			["User-Agent"] = "github-pr-browser-nvim",
 			["Authorization"] = "token " .. M.config.token,
@@ -174,7 +180,7 @@ end
 function M.get_pr_comments(pr_number, callback)
 	curl.get({
 		url = "https://api.github.com/repos/" ..
-		    M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/comments",
+			M.config.owner .. "/" .. M.config.repo .. "/pulls/" .. pr_number .. "/comments",
 		headers = {
 			["User-Agent"] = "github-pr-browser-nvim",
 			["Authorization"] = "token " .. M.config.token,
@@ -197,7 +203,7 @@ end
 function M.get_pr_issue_comments(pr_number, callback)
 	curl.get({
 		url = "https://api.github.com/repos/" ..
-		    M.config.owner .. "/" .. M.config.repo .. "/issues/" .. pr_number .. "/comments",
+			M.config.owner .. "/" .. M.config.repo .. "/issues/" .. pr_number .. "/comments",
 		headers = {
 			["User-Agent"] = "github-pr-browser-nvim",
 			["Authorization"] = "token " .. M.config.token,
@@ -220,7 +226,7 @@ end
 function M.get_pr_file_content(path, ref, callback)
 	curl.get({
 		url = "https://api.github.com/repos/" ..
-		    M.config.owner .. "/" .. M.config.repo .. "/contents/" .. path .. "?ref=" .. ref,
+			M.config.owner .. "/" .. M.config.repo .. "/contents/" .. path .. "?ref=" .. ref,
 		headers = {
 			["User-Agent"] = "github-pr-browser-nvim",
 			["Authorization"] = "token " .. M.config.token,

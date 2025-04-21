@@ -145,6 +145,7 @@ function M.handle_file_selection()
 
 	if file_num > 0 and file_num <= #files then
 		local selected_file = files[file_num]
+		pr_state.set("selected_file", selected_file.filename)
 
 		if pr_state.get("base_branch") and pr_state.get("head_branch") then
 			local baseRef = pr_state.get("base_branch")
@@ -304,14 +305,23 @@ function M.add_comment_at_current_line()
 
 	vim.api.nvim_buf_set_keymap(comment_buf, "i", "<CR>", "", {
 		callback = function()
-			local comment_text = vim.api.nvim_buf_get_lines(comment_buf, 0, -1, false)
-			comment_text = table.concat(comment_text, "\n")
+			local pending_comments_table = pr_state.get("pending_comments")
+			if not pending_comments_table then
+				pending_comments_table = {}
+			end
+
+			local pending_comment = {
+				path = pr_state.get("selected_file"),
+				line = line_num,
+				body = table.concat(vim.api.nvim_buf_get_lines(comment_buf, 0, -1, false), "\n"),
+			}
+			table.insert(pending_comments_table, pending_comment)
+			pr_state.set("pending_comments", pending_comments_table)
 
 			-- Close the comment window
 			vim.api.nvim_win_close(win, true)
 
-			-- Submit the comment via API
-			github_handler.submit_comment(pr_data.pr_number, file.filename, line_num, comment_text)
+			vim.notify("Comment added to pending review: " .. vim.inspect(pending_comments_table), vim.log.levels.INFO)
 		end,
 		noremap = true
 	})
@@ -355,7 +365,6 @@ function M.display_comments_for_file(filename)
 
 		table.insert(virt_comment_lines, { { " --- COMMENT THREAD ---", "CommentDivider" } })
 		for i, comment in ipairs(comments) do
-
 			local wrapped_text = wrap_text(" 💬 " .. comment.body, max_width)
 			for _, wrapped_line in ipairs(wrapped_text) do
 				table.insert(virt_comment_lines, { { wrapped_line, "CommentHighlight" } })
