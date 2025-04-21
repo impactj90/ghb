@@ -252,6 +252,11 @@ function M.view_file_diff(selected_file, file_contents)
 	vim.api.nvim_buf_set_keymap(pr_buf, 'n', '<BS>',
 		':q<CR>',
 		{ noremap = true, silent = true })
+
+	local pending_comments = pr_state.get("pending_comments")
+	if pending_comments then
+		M.on_handle_submit_reviews(pr_number, pending_comments)
+	end
 end
 
 function M.clear_buffers(win, buf)
@@ -315,7 +320,6 @@ function M.add_comment_at_current_line()
 				line = line_num,
 				body = table.concat(vim.api.nvim_buf_get_lines(comment_buf, 0, -1, false), "\n"),
 			}
-			table.insert(pending_comments_table, pending_comment)
 			pr_state.set("pending_comments", pending_comments_table)
 
 			-- Close the comment window
@@ -477,20 +481,61 @@ function M.show_comment_details()
 	end
 end
 
-function M.submit_comment(pr_number, filename, line_num, body)
-	-- This will use the GitHub API to submit a comment
-	-- You'll need to implement this in your github-handler.lua
-	github_handler.create_pr_comment(pr_number, filename, line_num, body, function(success)
-		if success then
-			vim.notify("Comment added successfully", vim.log.levels.INFO)
-			-- Refresh comments
-			github_handler.get_pr_comments(pr_number, function(comments)
-				vim.notify("submitted" .. comments, vim.log.levels.INFO)
+function M.on_handle_submit_reviews(pr_number, pending_comments)
+	local pr_buf = pr_state.get("buffers.pr_buf") or 0
+	vim.api.nvim_buf_set_keymap(pr_buf, 'n', '<leader>sr', '', {
+		noremap = true,
+		silent = true,
+		desc = "Submit PR review",
+		callback = function()
+			vim.ui.select({ "APPROVE", "REQUEST_CHANGES", "COMMENT" }, {
+				prompt = "Select Review Type",
+			}, function(event_type)
+				if not event_type then
+					vim.notify("No review type selected", vim.log.levels.WARN)
+					return
+				end
+				-- Get current line number
+				local cursor = vim.api.nvim_win_get_cursor(0)
+				local line_num = cursor[1]
+
+				-- Open a small floating window for comment input
+				local review_buf = vim.api.nvim_create_buf(false, true)
+				vim.api.nvim_buf_set_lines(review_buf, 0, -1, false,
+					{ "", "Type your review comment here (Press <CR> to submit, <Esc> to cancel)" })
+
+				local win_width = 70
+				local win_height = 10
+
+				local win = vim.api.nvim_open_win(review_buf, true, {
+					relative = "cursor",
+					width = win_width,
+					height = win_height,
+					row = 1,
+					col = 0,
+					style = "minimal",
+					border = "rounded"
+				})
+
+				local body = table.concat(vim.api.nvim_buf_get_lines(review_buf, 0, -1, false), "\n")
+
+				-- Set insert mode and mappings
+				vim.cmd("startinsert!")
+
+				github_handler.submit_review(pr_number, body, event_type, pending_comments, function(success)
+					if success then
+						vim.notify("Review submitted successfully", vim.log.levels.INFO)
+						-- Refresh comments
+						github_handler.get_pr_comments(pr_number, function(comments)
+							vim.notify("submitted" .. comments, vim.log.levels.INFO)
+						end)
+					else
+						vim.notify("Failed to add comment", vim.log.levels.ERROR)
+					end
+				end)
 			end)
-		else
-			vim.notify("Failed to add comment", vim.log.levels.ERROR)
 		end
-	end)
+	})
 end
 
 return M

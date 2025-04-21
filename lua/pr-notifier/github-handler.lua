@@ -152,11 +152,11 @@ end
 -- @param comments table|nil: Array of inline comment objects 
 -- which includes path (string), position (number), body(string)
 -- @param callback function: Function to call with the response
-function M.submit_review(pr_number, event_type, body, comments, callback)
+function M.submit_review(pr_number, body, event_type, pending_comments, callback)
 	local request_body = vim.json.encode({
 		body = body,
 		event = event_type,
-		comments = comments or {},
+		comments = pending_comments
 	})
 	curl.post({
 		url = "https://api.github.com/repos/" ..

@@ -15,7 +15,7 @@ local M = {
 	},
 	filename = nil,
 	commit_id = nil,
-	pr_number = nil,
+	pr_number = 0,
 	line_mapping = nil,
 	pending_comments = {},
 	organized_comments = {},
