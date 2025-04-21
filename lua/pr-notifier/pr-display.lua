@@ -517,22 +517,37 @@ function M.on_handle_submit_reviews(pr_number, pending_comments)
 					border = "rounded"
 				})
 
-				local body = table.concat(vim.api.nvim_buf_get_lines(review_buf, 0, -1, false), "\n")
-
-				-- Set insert mode and mappings
 				vim.cmd("startinsert!")
 
-				github_handler.submit_review(pr_number, body, event_type, pending_comments, function(success)
-					if success then
-						vim.notify("Review submitted successfully", vim.log.levels.INFO)
-						-- Refresh comments
-						github_handler.get_pr_comments(pr_number, function(comments)
-							vim.notify("submitted" .. comments, vim.log.levels.INFO)
+				vim.api.nvim_buf_set_keymap(review_buf, 'n', '<CR>', '', {
+					noremap = true,
+					silent = true,
+					callback = function()
+						local body = table.concat(vim.api.nvim_buf_get_lines(review_buf, 0, -1, false), "\n")
+
+						github_handler.submit_review(pr_number, body, event_type, pending_comments, function(success)
+							if success then
+								vim.notify("Review submitted successfully", vim.log.levels.INFO)
+								-- Refresh comments
+								github_handler.get_pr_comments(pr_number, function(comments)
+									vim.notify("submitted" .. comments, vim.log.levels.INFO)
+								end)
+							else
+								vim.notify("Failed to add comment", vim.log.levels.ERROR)
+							end
 						end)
-					else
-						vim.notify("Failed to add comment", vim.log.levels.ERROR)
+						vim.api.nvim_win_close(win, true)
 					end
-				end)
+				})
+
+				vim.api.nvim_buf_set_keymap(review_buf, 'n', '<Esc>', '', {
+					noremap = true,
+					silent = true,
+					callback = function()
+						vim.api.nvim_win_close(win, true)
+						vim.notify("Review cancelled", vim.log.levels.INFO)
+					end
+				})
 			end)
 		end
 	})
