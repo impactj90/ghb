@@ -47,6 +47,42 @@ local function setup_comment_keymaps(buf)
 	})
 end
 
+local function build_line_mapping()
+	local patch = pr_state.get("selected_patch")
+	local lines = vim.split(patch or "", "\n")
+	local line_mapping = {}
+
+	local file_line_num = 0
+	local diff_position = 0
+
+	for _, line in ipairs(lines) do
+		-- Detect hunk headers
+		local start_line = line:match("^@@ %-(%d+)")
+		local plus_start = line:match("^@@ %-%d+,%d+ %+(%d+)")
+
+		if start_line and plus_start then
+			file_line_num = tonumber(plus_start)
+			diff_position = 0
+		else
+			if line:sub(1, 1) == "+" then
+				-- Only for added lines
+				diff_position = diff_position + 1
+				line_mapping[file_line_num] = diff_position
+				file_line_num = file_line_num + 1
+			elseif line:sub(1, 1) == " " then
+				-- Context line
+				diff_position = diff_position + 1
+				file_line_num = file_line_num + 1
+			elseif line:sub(1, 1) == "-" then
+				-- Removed lines do not advance file line number
+				diff_position = diff_position + 1
+			end
+		end
+	end
+
+	return line_mapping
+end
+
 function M.show_pr_details(pr_number, owner, repo)
 	M.details_buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_set_current_buf(M.details_buf)
@@ -146,6 +182,7 @@ function M.handle_file_selection()
 	if file_num > 0 and file_num <= #files then
 		local selected_file = files[file_num]
 		pr_state.set("selected_file", selected_file.filename)
+		pr_state.set("selected_patch", selected_file.patch)
 
 		if pr_state.get("base_branch") and pr_state.get("head_branch") then
 			local baseRef = pr_state.get("base_branch")
@@ -211,6 +248,9 @@ function M.view_file_diff(selected_file, file_contents)
 	vim.cmd("diffthis")
 
 	vim.api.nvim_set_current_win(pr_win)
+
+	local line_mapping = build_line_mapping(pr_buf)
+	pr_state.set("line_mapping", line_mapping)
 
 	vim.api.nvim_buf_set_keymap(pr_buf, 'n', 'q', '', {
 		noremap = true,
@@ -315,11 +355,19 @@ function M.add_comment_at_current_line()
 				pending_comments_table = {}
 			end
 
+			local diff_position = pr_state.get("line_mapping")[line_num]
+
+			if not diff_position then
+				vim.notify("Could not find diff position for line: " .. line_num, vim.log.levels.ERROR)
+				return
+			end
+
 			local pending_comment = {
 				path = pr_state.get("selected_file"),
-				line = line_num,
-				body = table.concat(vim.api.nvim_buf_get_lines(comment_buf, 0, -1, false), "\n"),
+				position = diff_position,
+				body = table.concat(vim.api.nvim_buf_get_lines(comment_buf, 0, -2, false), "\n"),
 			}
+			table.insert(pending_comments_table, pending_comment)
 			pr_state.set("pending_comments", pending_comments_table)
 
 			-- Close the comment window
@@ -525,17 +573,18 @@ function M.on_handle_submit_reviews(pr_number, pending_comments)
 					callback = function()
 						local body = table.concat(vim.api.nvim_buf_get_lines(review_buf, 0, -1, false), "\n")
 
-						github_handler.submit_review(pr_number, body, event_type, pending_comments, function(success)
-							if success then
-								vim.notify("Review submitted successfully", vim.log.levels.INFO)
-								-- Refresh comments
-								github_handler.get_pr_comments(pr_number, function(comments)
-									vim.notify("submitted" .. comments, vim.log.levels.INFO)
-								end)
-							else
-								vim.notify("Failed to add comment", vim.log.levels.ERROR)
-							end
-						end)
+						github_handler.submit_review(pr_number, body, event_type, pending_comments,
+							function(success)
+								if success then
+									vim.schedule(function()
+										github_handler.get_pr_comments(pr_number, function(comments)
+											vim.notify("submitted" .. comments, vim.log.levels.INFO)
+										end)
+									end)
+								else
+									vim.notify("Failed to add comment", vim.log.levels.ERROR)
+								end
+							end)
 						vim.api.nvim_win_close(win, true)
 					end
 				})

@@ -88,7 +88,7 @@ function M.create_comment(pr_number, body, callback)
 			if response.status == 201 then
 				print("Comment created successfully")
 			else
-				print("Error creating comment: " .. response.status)
+				print("Error creating comment: " .. vim.inspect(response))
 			end
 		end
 	})
@@ -109,7 +109,7 @@ function M.get_review_comments(pr_number, callback)
 					callback(data)
 				end
 			else
-				print("Error creating comment: " .. response.status)
+				print("Error getting comment: " .. vim.inspect(response))
 			end
 		end
 	})
@@ -139,7 +139,7 @@ function M.create_review_comment(pr_number, commit_id, path, position, body, cal
 					callback(data)
 				end
 			else
-				print("Error creating comment: " .. response.status)
+				print("Error creating review comment: " .. vim.inspect(response))
 			end
 		end
 	})
@@ -153,6 +153,7 @@ end
 -- which includes path (string), position (number), body(string)
 -- @param callback function: Function to call with the response
 function M.submit_review(pr_number, body, event_type, pending_comments, callback)
+	vim.notify("pending comments: " .. vim.inspect(pending_comments), vim.log.levels.INFO)
 	local request_body = vim.json.encode({
 		body = body,
 		event = event_type,
@@ -168,10 +169,10 @@ function M.submit_review(pr_number, body, event_type, pending_comments, callback
 		},
 		body = request_body,
 		callback = function(response)
-			if response.status == 201 then
+			if response.status == 200 then
 				callback(response.body)
 			else
-				print("Error creating comment: " .. response.status)
+				print("Error submitting review: " .. vim.inspect(response))
 			end
 		end
 	})
