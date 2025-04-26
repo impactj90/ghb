@@ -238,10 +238,10 @@ function M.get_pr_file_content(path, ref, callback)
 				if success then
 					callback(data)
 				else
-					print("Failed to decode JSON response for comments")
+					print("Failed to decode JSON response for file contents")
 				end
 			else
-				print("Error fetching PR comments: " .. response.status)
+				print("Error fetching PR file contents: " .. response.status)
 			end
 		end,
 	})

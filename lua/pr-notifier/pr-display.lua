@@ -1,5 +1,6 @@
 local github_handler = require("pr-notifier.github-handler")
 local pr_state = require("pr-notifier.pr-state")
+local comments_handler = require("pr-notifier.comments-handler")
 
 local M = {
 	details_buf = nil,
@@ -242,7 +243,7 @@ function M.view_file_diff(selected_file, file_contents)
 	vim.api.nvim_win_set_buf(0, base_buf)
 	vim.cmd("diffthis")
 
-	vim.cmd("rightbelow split")
+	vim.cmd("rightbelow vsplit")
 	local pr_win = vim.api.nvim_get_current_win()
 	vim.api.nvim_win_set_buf(0, pr_buf)
 	vim.cmd("diffthis")
@@ -271,7 +272,6 @@ function M.view_file_diff(selected_file, file_contents)
 	if pr_number then
 		github_handler.get_pr_comments(pr_number, function(comments)
 			vim.schedule(function()
-				local comments_handler = require("pr-notifier.comments-handler")
 				local organized_comments = comments_handler.organize_comments_by_file(comments)
 
 				pr_state.set("organized_comments", organized_comments)
@@ -530,76 +530,86 @@ function M.show_comment_details()
 end
 
 function M.on_handle_submit_reviews(pr_number, pending_comments)
-	local pr_buf = pr_state.get("buffers.pr_buf") or 0
-	vim.api.nvim_buf_set_keymap(pr_buf, 'n', '<leader>sr', '', {
-		noremap = true,
-		silent = true,
-		desc = "Submit PR review",
-		callback = function()
-			vim.ui.select({ "APPROVE", "REQUEST_CHANGES", "COMMENT" }, {
-				prompt = "Select Review Type",
-			}, function(event_type)
-				if not event_type then
-					vim.notify("No review type selected", vim.log.levels.WARN)
-					return
-				end
-				-- Get current line number
-				local cursor = vim.api.nvim_win_get_cursor(0)
-				local line_num = cursor[1]
+	vim.schedule(function()
+		local pr_buf = pr_state.get("buffers.pr_buf") or 0
+		vim.api.nvim_buf_set_keymap(pr_buf, 'n', '<leader>sr', '', {
+			noremap = true,
+			silent = true,
+			desc = "Submit PR review",
+			callback = function()
+				vim.ui.select({ "APPROVE", "REQUEST_CHANGES", "COMMENT" }, {
+					prompt = "Select Review Type",
+				}, function(event_type)
+					if not event_type then
+						vim.notify("No review type selected", vim.log.levels.WARN)
+						return
+					end
+					-- Get current line number
+					local cursor = vim.api.nvim_win_get_cursor(0)
+					local line_num = cursor[1]
 
-				-- Open a small floating window for comment input
-				local review_buf = vim.api.nvim_create_buf(false, true)
-				vim.api.nvim_buf_set_lines(review_buf, 0, -1, false,
-					{ "", "Type your review comment here (Press <CR> to submit, <Esc> to cancel)" })
+					-- Open a small floating window for comment input
+					local review_buf = vim.api.nvim_create_buf(false, true)
+					vim.api.nvim_buf_set_lines(review_buf, 0, -1, false,
+						{ "", "Type your review comment here (Press <CR> to submit, <Esc> to cancel)" })
 
-				local win_width = 70
-				local win_height = 10
+					local win_width = 70
+					local win_height = 10
 
-				local win = vim.api.nvim_open_win(review_buf, true, {
-					relative = "cursor",
-					width = win_width,
-					height = win_height,
-					row = 1,
-					col = 0,
-					style = "minimal",
-					border = "rounded"
-				})
+					local win = vim.api.nvim_open_win(review_buf, true, {
+						relative = "cursor",
+						width = win_width,
+						height = win_height,
+						row = 1,
+						col = 0,
+						style = "minimal",
+						border = "rounded"
+					})
 
-				vim.cmd("startinsert!")
+					vim.cmd("startinsert!")
 
-				vim.api.nvim_buf_set_keymap(review_buf, 'n', '<CR>', '', {
-					noremap = true,
-					silent = true,
-					callback = function()
-						local body = table.concat(vim.api.nvim_buf_get_lines(review_buf, 0, -1, false), "\n")
+					vim.api.nvim_buf_set_keymap(review_buf, 'n', '<CR>', '', {
+						noremap = true,
+						silent = true,
+						callback = function()
+							local body = table.concat(vim.api.nvim_buf_get_lines(review_buf, 0, -2, false), "\n")
 
-						github_handler.submit_review(pr_number, body, event_type, pending_comments,
-							function(success)
-								if success then
-									vim.schedule(function()
-										github_handler.get_pr_comments(pr_number, function(comments)
-											vim.notify("submitted" .. comments, vim.log.levels.INFO)
+							github_handler.submit_review(pr_number, body, event_type, pending_comments,
+								function(success)
+									if success then
+										vim.schedule(function()
+											github_handler.get_pr_comments(pr_number, function(comments)
+												local organized_comments = comments_handler.organize_comments_by_file(
+													comments)
+												pr_state.set("organized_comments", organized_comments)
+
+												local current_file = pr_state.get("selected_file")
+												M.display_comments_for_file(current_file)
+												vim.notify(
+													"comments are now displayed in the pr in github but not in the file yet..",
+													vim.log.levels.INFO)
+											end)
 										end)
-									end)
-								else
-									vim.notify("Failed to add comment", vim.log.levels.ERROR)
-								end
-							end)
-						vim.api.nvim_win_close(win, true)
-					end
-				})
+									else
+										vim.notify("Failed to add comment", vim.log.levels.ERROR)
+									end
+								end)
+							vim.api.nvim_win_close(win, true)
+						end
+					})
 
-				vim.api.nvim_buf_set_keymap(review_buf, 'n', '<Esc>', '', {
-					noremap = true,
-					silent = true,
-					callback = function()
-						vim.api.nvim_win_close(win, true)
-						vim.notify("Review cancelled", vim.log.levels.INFO)
-					end
-				})
-			end)
-		end
-	})
+					vim.api.nvim_buf_set_keymap(review_buf, 'n', '<Esc>', '', {
+						noremap = true,
+						silent = true,
+						callback = function()
+							vim.api.nvim_win_close(win, true)
+							vim.notify("Review cancelled", vim.log.levels.INFO)
+						end
+					})
+				end)
+			end
+		})
+	end)
 end
 
 return M
