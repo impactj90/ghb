@@ -1,5 +1,6 @@
 local github_handler = require("pr-notifier.github-handler")
 local pr_state = require("pr-notifier.pr-state")
+local comments_handler = require("pr-notifier.comments-handler")
 
 local M = {
 	details_buf = nil,
@@ -45,6 +46,42 @@ local function setup_comment_keymaps(buf)
 		silent = true,
 		desc = "Show PR comment details"
 	})
+end
+
+local function build_line_mapping()
+	local patch = pr_state.get("selected_patch")
+	local lines = vim.split(patch or "", "\n")
+	local line_mapping = {}
+
+	local file_line_num = 0
+	local diff_position = 0
+
+	for _, line in ipairs(lines) do
+		-- Detect hunk headers
+		local start_line = line:match("^@@ %-(%d+)")
+		local plus_start = line:match("^@@ %-%d+,%d+ %+(%d+)")
+
+		if start_line and plus_start then
+			file_line_num = tonumber(plus_start)
+			diff_position = 0
+		else
+			if line:sub(1, 1) == "+" then
+				-- Only for added lines
+				diff_position = diff_position + 1
+				line_mapping[file_line_num] = diff_position
+				file_line_num = file_line_num + 1
+			elseif line:sub(1, 1) == " " then
+				-- Context line
+				diff_position = diff_position + 1
+				file_line_num = file_line_num + 1
+			elseif line:sub(1, 1) == "-" then
+				-- Removed lines do not advance file line number
+				diff_position = diff_position + 1
+			end
+		end
+	end
+
+	return line_mapping
 end
 
 function M.show_pr_details(pr_number, owner, repo)
@@ -145,6 +182,8 @@ function M.handle_file_selection()
 
 	if file_num > 0 and file_num <= #files then
 		local selected_file = files[file_num]
+		pr_state.set("selected_file", selected_file.filename)
+		pr_state.set("selected_patch", selected_file.patch)
 
 		if pr_state.get("base_branch") and pr_state.get("head_branch") then
 			local baseRef = pr_state.get("base_branch")
@@ -204,12 +243,15 @@ function M.view_file_diff(selected_file, file_contents)
 	vim.api.nvim_win_set_buf(0, base_buf)
 	vim.cmd("diffthis")
 
-	vim.cmd("rightbelow split")
+	vim.cmd("rightbelow vsplit")
 	local pr_win = vim.api.nvim_get_current_win()
 	vim.api.nvim_win_set_buf(0, pr_buf)
 	vim.cmd("diffthis")
 
 	vim.api.nvim_set_current_win(pr_win)
+
+	local line_mapping = build_line_mapping(pr_buf)
+	pr_state.set("line_mapping", line_mapping)
 
 	vim.api.nvim_buf_set_keymap(pr_buf, 'n', 'q', '', {
 		noremap = true,
@@ -230,7 +272,6 @@ function M.view_file_diff(selected_file, file_contents)
 	if pr_number then
 		github_handler.get_pr_comments(pr_number, function(comments)
 			vim.schedule(function()
-				local comments_handler = require("pr-notifier.comments-handler")
 				local organized_comments = comments_handler.organize_comments_by_file(comments)
 
 				pr_state.set("organized_comments", organized_comments)
@@ -251,6 +292,11 @@ function M.view_file_diff(selected_file, file_contents)
 	vim.api.nvim_buf_set_keymap(pr_buf, 'n', '<BS>',
 		':q<CR>',
 		{ noremap = true, silent = true })
+
+	local pending_comments = pr_state.get("pending_comments")
+	if pending_comments then
+		M.on_handle_submit_reviews(pr_number, pending_comments)
+	end
 end
 
 function M.clear_buffers(win, buf)
@@ -304,14 +350,30 @@ function M.add_comment_at_current_line()
 
 	vim.api.nvim_buf_set_keymap(comment_buf, "i", "<CR>", "", {
 		callback = function()
-			local comment_text = vim.api.nvim_buf_get_lines(comment_buf, 0, -1, false)
-			comment_text = table.concat(comment_text, "\n")
+			local pending_comments_table = pr_state.get("pending_comments")
+			if not pending_comments_table then
+				pending_comments_table = {}
+			end
+
+			local diff_position = pr_state.get("line_mapping")[line_num]
+
+			if not diff_position then
+				vim.notify("Could not find diff position for line: " .. line_num, vim.log.levels.ERROR)
+				return
+			end
+
+			local pending_comment = {
+				path = pr_state.get("selected_file"),
+				position = diff_position,
+				body = table.concat(vim.api.nvim_buf_get_lines(comment_buf, 0, -2, false), "\n"),
+			}
+			table.insert(pending_comments_table, pending_comment)
+			pr_state.set("pending_comments", pending_comments_table)
 
 			-- Close the comment window
 			vim.api.nvim_win_close(win, true)
 
-			-- Submit the comment via API
-			github_handler.submit_comment(pr_data.pr_number, file.filename, line_num, comment_text)
+			vim.notify("Comment added to pending review: " .. vim.inspect(pending_comments_table), vim.log.levels.INFO)
 		end,
 		noremap = true
 	})
@@ -355,7 +417,6 @@ function M.display_comments_for_file(filename)
 
 		table.insert(virt_comment_lines, { { " --- COMMENT THREAD ---", "CommentDivider" } })
 		for i, comment in ipairs(comments) do
-
 			local wrapped_text = wrap_text(" 💬 " .. comment.body, max_width)
 			for _, wrapped_line in ipairs(wrapped_text) do
 				table.insert(virt_comment_lines, { { wrapped_line, "CommentHighlight" } })
@@ -468,19 +529,86 @@ function M.show_comment_details()
 	end
 end
 
-function M.submit_comment(pr_number, filename, line_num, body)
-	-- This will use the GitHub API to submit a comment
-	-- You'll need to implement this in your github-handler.lua
-	github_handler.create_pr_comment(pr_number, filename, line_num, body, function(success)
-		if success then
-			vim.notify("Comment added successfully", vim.log.levels.INFO)
-			-- Refresh comments
-			github_handler.get_pr_comments(pr_number, function(comments)
-				vim.notify("submitted" .. comments, vim.log.levels.INFO)
-			end)
-		else
-			vim.notify("Failed to add comment", vim.log.levels.ERROR)
-		end
+function M.on_handle_submit_reviews(pr_number, pending_comments)
+	vim.schedule(function()
+		local pr_buf = pr_state.get("buffers.pr_buf") or 0
+		vim.api.nvim_buf_set_keymap(pr_buf, 'n', '<leader>sr', '', {
+			noremap = true,
+			silent = true,
+			desc = "Submit PR review",
+			callback = function()
+				vim.ui.select({ "APPROVE", "REQUEST_CHANGES", "COMMENT" }, {
+					prompt = "Select Review Type",
+				}, function(event_type)
+					if not event_type then
+						vim.notify("No review type selected", vim.log.levels.WARN)
+						return
+					end
+					-- Get current line number
+					local cursor = vim.api.nvim_win_get_cursor(0)
+					local line_num = cursor[1]
+
+					-- Open a small floating window for comment input
+					local review_buf = vim.api.nvim_create_buf(false, true)
+					vim.api.nvim_buf_set_lines(review_buf, 0, -1, false,
+						{ "", "Type your review comment here (Press <CR> to submit, <Esc> to cancel)" })
+
+					local win_width = 70
+					local win_height = 10
+
+					local win = vim.api.nvim_open_win(review_buf, true, {
+						relative = "cursor",
+						width = win_width,
+						height = win_height,
+						row = 1,
+						col = 0,
+						style = "minimal",
+						border = "rounded"
+					})
+
+					vim.cmd("startinsert!")
+
+					vim.api.nvim_buf_set_keymap(review_buf, 'n', '<CR>', '', {
+						noremap = true,
+						silent = true,
+						callback = function()
+							local body = table.concat(vim.api.nvim_buf_get_lines(review_buf, 0, -2, false), "\n")
+
+							github_handler.submit_review(pr_number, body, event_type, pending_comments,
+								function(success)
+									if success then
+										vim.schedule(function()
+											github_handler.get_pr_comments(pr_number, function(comments)
+												local organized_comments = comments_handler.organize_comments_by_file(
+													comments)
+												pr_state.set("organized_comments", organized_comments)
+
+												local current_file = pr_state.get("selected_file")
+												M.display_comments_for_file(current_file)
+												vim.notify(
+													"comments are now displayed in the pr in github but not in the file yet..",
+													vim.log.levels.INFO)
+											end)
+										end)
+									else
+										vim.notify("Failed to add comment", vim.log.levels.ERROR)
+									end
+								end)
+							vim.api.nvim_win_close(win, true)
+						end
+					})
+
+					vim.api.nvim_buf_set_keymap(review_buf, 'n', '<Esc>', '', {
+						noremap = true,
+						silent = true,
+						callback = function()
+							vim.api.nvim_win_close(win, true)
+							vim.notify("Review cancelled", vim.log.levels.INFO)
+						end
+					})
+				end)
+			end
+		})
 	end)
 end
 

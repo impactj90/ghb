@@ -26,4 +26,7 @@ function M.organize_comments_by_file(comments)
 	return organized
 end
 
+function M.queue_comments()
+end
+
 return M
