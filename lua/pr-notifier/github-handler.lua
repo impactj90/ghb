@@ -241,7 +241,7 @@ function M.get_pr_file_content(path, ref, callback)
 					print("Failed to decode JSON response for file contents")
 				end
 			else
-				print("Error fetching PR file contents: " .. response.status)
+				print("Error fetching PR file contents: " .. response.status, response.body)
 			end
 		end,
 	})

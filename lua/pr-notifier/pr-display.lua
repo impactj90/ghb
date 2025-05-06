@@ -191,51 +191,93 @@ function M.handle_file_selection()
 
 			local file_contents = {}
 			local completed_requests = 0
+			local requests = {}
 
-			github_handler.get_pr_file_content(selected_file.filename, baseRef,
-				function(file_content)
-					vim.schedule(function()
-						file_contents[1] = vim.fn.system('base64 --decode',
-							file_content.content)
+			if selected_file.status == "added" then
+				requests = {
+					{ ref = headRef, index = 2 }
+				}
+			elseif selected_file.status == "removed" then
+				requests = {
+					{ ref = baseRef, index = 1 }
+				}
+			else
+				requests = {
+					{ ref = baseRef, index = 1 },
+					{ ref = headRef, index = 2 }
+				}
+			end
 
-						completed_requests = completed_requests + 1
-						if completed_requests == 2 then
-							M.view_file_diff(selected_file, file_contents)
-						end
+			local total_requests = #requests
+			for _, req in ipairs(requests) do
+				github_handler.get_pr_file_content(selected_file.filename, req.ref,
+					function(file_content)
+						vim.schedule(function()
+							file_contents[req.index] = vim.fn.system('base64 --decode',
+								file_content.content)
+
+							completed_requests = completed_requests + 1
+							if completed_requests == total_requests then
+								M.view_file_diff(selected_file, file_contents)
+							end
+						end)
 					end)
-				end)
-
-			github_handler.get_pr_file_content(selected_file.filename, headRef,
-				function(file_content)
-					vim.schedule(function()
-						file_contents[2] = vim.fn.system('base64 --decode',
-							file_content.content)
-
-						completed_requests = completed_requests + 1
-						if completed_requests == 2 then
-							M.view_file_diff(selected_file, file_contents)
-						end
-					end)
-				end)
+			end
 		end
 	else
 		vim.notify("Invalid file number: " .. file_num, vim.log.levels.ERROR)
 	end
 end
 
-function M.view_file_diff(selected_file, file_contents)
-	local base_branch = pr_state.get("base_branch")
-	local head_branch = pr_state.get("head_branch")
 
+--- @param base string
+--- @param head string
+--- @return integer, integer
+local function create_split_buffers(base, head)
 	local base_buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_name(base_buf, "[BASE: " .. base_branch .. "] ")
-	vim.api.nvim_buf_set_lines(base_buf, 0, -1, false, vim.split(file_contents[1], "\n"))
+	vim.api.nvim_buf_set_name(base_buf, "[BASE: " .. pr_state.get("base_branch") .. "] ")
+	vim.api.nvim_buf_set_lines(base_buf, 0, -1, false, vim.split(base, "\n"))
 	pr_state.set("buffers.base_buf", base_buf)
 
 	local pr_buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_name(pr_buf, "[HEAD: " .. head_branch .. "] ")
-	vim.api.nvim_buf_set_lines(pr_buf, 0, -1, false, vim.split(file_contents[2], "\n"))
+	vim.api.nvim_buf_set_name(pr_buf, "[HEAD: " .. pr_state.get("head_branch") .. "] ")
+	vim.api.nvim_buf_set_lines(pr_buf, 0, -1, false, vim.split(head, "\n"))
 	pr_state.set("buffers.pr_buf", pr_buf)
+
+	return base_buf, pr_buf
+end
+
+
+--- @param content string
+--- @param name string
+--- @return integer
+local function create_single_buffer(content, name)
+	local base_buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_name(base_buf, name)
+	vim.api.nvim_buf_set_lines(base_buf, 0, -1, false, vim.split(content, "\n"))
+	pr_state.set("buffers.base_buf", base_buf)
+
+	return base_buf
+end
+
+function M.view_file_diff(selected_file, file_contents)
+	local has_base = file_contents[1] ~= nil
+	local has_head = file_contents[2] ~= nil
+	local base_buf = 0
+	local pr_buf = 0
+
+	if has_base and has_head then
+		base_buf, pr_buf = create_split_buffers(file_contents[1], file_contents[2])
+	elseif has_base then
+		vim.print(vim.inspect(file_contents[1]))
+		base_buf = create_single_buffer(file_contents[1], "[DELETED IN HEAD]")
+	elseif has_head then
+		vim.print(vim.inspect(file_contents[2]))
+		pr_buf = create_single_buffer(file_contents[2], "[ADDED IN HEAD]")
+	else
+		vim.notify("No file contents to display", vim.logs.levels.INFO)
+		return
+	end
 
 	vim.cmd("split")
 	vim.cmd("resize 80%")
@@ -250,7 +292,7 @@ function M.view_file_diff(selected_file, file_contents)
 
 	vim.api.nvim_set_current_win(pr_win)
 
-	local line_mapping = build_line_mapping(pr_buf)
+	local line_mapping = build_line_mapping()
 	pr_state.set("line_mapping", line_mapping)
 
 	vim.api.nvim_buf_set_keymap(pr_buf, 'n', 'q', '', {
